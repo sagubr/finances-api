@@ -1,0 +1,50 @@
+// Schema ativo do primeiro entregável. Módulos futuros continuam no código,
+// mas só entram nas migrations quando forem promovidos para esta allow-list.
+export {
+  authSchema,
+  emailTokens,
+  idempotencyRecords,
+  jobRuns,
+  jobStatus,
+  loginAttempts,
+  outboxEvents,
+  sessions,
+  tokenPurpose,
+  userCredentials,
+  users,
+  workspaceMembers,
+  workspaceRole,
+  workspaces,
+} from "#/modules/platform/infrastructure/database/platform.schema.js";
+
+export {
+  accountType,
+  accounts,
+  categories,
+  categoryType,
+  transactionHistory,
+  transactionStatus,
+  transactionType,
+  transactions,
+  transferPairs,
+} from "#/modules/transactions/infrastructure/database/transactions.schema.js";
+
+export {
+  budgetThresholdDeliveries,
+  budgets,
+  cardAccountingMode,
+  cardStatements,
+  creditCards,
+  importBatches,
+  importCommits,
+  importRowStatus,
+  importRows,
+  importStatus,
+  installmentPlans,
+  recurrenceFrequency,
+  recurringOccurrences,
+  recurringRules,
+  statementCycles,
+  statementPayments,
+  statementStatus,
+} from "#/modules/planning/infrastructure/database/planning.schema.js";
