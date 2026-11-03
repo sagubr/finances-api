@@ -24,9 +24,10 @@ export class RegisterController {
 
   async handle(request: FastifyRequest<{ Body: RegisterInput }>, reply: FastifyReply) {
     const registered = await this.useCase.execute(request.body);
-    return reply
-      .status(201)
-      .send(response(registered, "Conta criada. Confira seu e-mail para confirmar o cadastro."));
+    const message = registered.emailConfirmationRequired
+      ? "Conta criada. Confira seu e-mail para confirmar o cadastro."
+      : "Conta criada e confirmada. Você já pode entrar.";
+    return reply.status(201).send(response(registered, message));
   }
 }
 

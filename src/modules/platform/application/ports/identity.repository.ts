@@ -25,21 +25,38 @@ export type WorkspaceSummary = Readonly<{
   role: "OWNER" | "EDITOR" | "VIEWER";
 }>;
 
-export type Credential = Readonly<{ userId: bigint; passwordHash: string }>;
+export type Credential = Readonly<{
+  userId: bigint;
+  passwordHash: string;
+  isEmailConfirmed: boolean;
+}>;
 export type IdentityUser = Readonly<{ internalId: bigint; publicId: string }>;
-export type RegisterUserInput = Readonly<{
+type RegisterUserBase = Readonly<{
   email: string;
   displayName: string;
   passwordHash: string;
   userPublicId: string;
   workspacePublicId: string;
   workspaceName: string;
-  emailToken: Omit<CreateEmailTokenInput, "userId">;
   userRegisteredEventId: string;
   workspaceCreatedEventId: string;
   correlationId: string;
 }>;
-export type RegisteredUser = Readonly<{ userId: string; workspaceId: string }>;
+type RegisterUserConfirmation =
+  | Readonly<{
+      emailConfirmedAt: Date;
+      emailToken?: never;
+    }>
+  | Readonly<{
+      emailConfirmedAt?: never;
+      emailToken: Omit<CreateEmailTokenInput, "userId">;
+    }>;
+export type RegisterUserInput = RegisterUserBase & RegisterUserConfirmation;
+export type RegisteredUser = Readonly<{
+  userId: string;
+  workspaceId: string;
+  emailConfirmationRequired: boolean;
+}>;
 export type CreateEmailTokenInput = Readonly<{
   publicId: string;
   userId: bigint;
@@ -65,7 +82,7 @@ export type CreateSessionInput = Readonly<{
 export interface IIdentityRepository {
   registerUser(input: RegisterUserInput): Promise<RegisteredUser | null>;
   findCredentialByEmail(email: string): Promise<Credential | null>;
-  countRecentFailedLoginAttempts(emailHash: string, ipHash: string, since: Date): Promise<number>;
+  countRecentFailedLoginAttemptsByIp(ipHash: string, since: Date): Promise<number>;
   recordLoginAttempt(emailHash: string, ipHash: string, succeeded: boolean): Promise<void>;
   createSession(input: CreateSessionInput): Promise<void>;
   confirmEmail(tokenHash: string): Promise<boolean>;

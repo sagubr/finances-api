@@ -13,7 +13,10 @@ export const createFastifyApplication = ({
   trustProxy,
 }: FastifyFactoryOptions): FastifyInstance => {
   const app = Fastify({
-    logger: { level: logLevel },
+    logger: {
+      level: logLevel,
+      redact: ["req.headers.authorization", "req.headers.cookie", 'res.headers["set-cookie"]'],
+    },
     trustProxy: trustProxy === false ? false : (_address: string, hop: number) => hop < trustProxy,
     bodyLimit: 1024 * 1024,
     genReqId: (request) => {

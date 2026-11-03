@@ -1,5 +1,6 @@
 import { ApplicationError } from "#/shared/application/application.error.js";
 import { ApiError } from "#/shared/http/api.error.js";
+import { toSafeErrorLog } from "#/shared/observability/safe-error-log.js";
 import type { FastifyError, FastifyReply, FastifyRequest } from "fastify";
 
 const internalError = {
@@ -113,7 +114,7 @@ export const errorHandler = (
 
   const databaseClientError = databaseClientErrors.get(errorCode(error) ?? "");
   if (databaseClientError) {
-    request.log.warn({ err: error }, "Database rejected client input");
+    request.log.warn({ error: toSafeErrorLog(error) }, "Database rejected client input");
     return reply.status(databaseClientError.statusCode).send({
       success: false,
       message: databaseClientError.message,
@@ -122,7 +123,7 @@ export const errorHandler = (
   }
 
   if (transientDatabaseCodes.has(errorCode(error) ?? "")) {
-    request.log.error({ err: error }, "Transient database error");
+    request.log.error({ error: toSafeErrorLog(error) }, "Transient database error");
     return reply.status(503).send({
       success: false,
       message: "Conexão temporariamente indisponível.",
@@ -140,7 +141,7 @@ export const errorHandler = (
     });
   }
 
-  request.log.error({ err: error }, "Unhandled request error");
+  request.log.error({ error: toSafeErrorLog(error) }, "Unhandled request error");
   return reply.status(500).send({
     ...internalError,
     data: { ...internalError.data, requestId: request.id },

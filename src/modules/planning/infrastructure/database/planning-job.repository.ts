@@ -10,6 +10,7 @@ import {
   budgetThresholdDeliveries,
   cardStatements,
   creditCards,
+  importBatches,
   recurringOccurrences,
   recurringRules,
   statementCycles,
@@ -20,8 +21,12 @@ import {
   categories,
   transactions,
 } from "#/modules/transactions/infrastructure/database/transactions.schema.js";
+import {
+  categorizedConsumptionTypes,
+  transactionSource,
+} from "#/modules/transactions/public/transaction-source.js";
 import { ApplicationError } from "#/shared/application/application.error.js";
-import { and, eq, gte, isNull, lte, or, sql } from "drizzle-orm";
+import { and, eq, gte, inArray, isNull, lt, lte, ne, or, sql } from "drizzle-orm";
 import { CardStatementProjectionWriter } from "./card-statement-projection.writer.js";
 
 export class PlanningJobRepository implements IPlanningJobRepository {
@@ -48,6 +53,28 @@ export class PlanningJobRepository implements IPlanningJobRepository {
         ),
       );
     return rows.map((row) => row.id);
+  }
+
+  listExpiredImportFiles(before: Date, limit: number) {
+    return this.database
+      .select({ id: importBatches.id, storageKey: importBatches.storageKey })
+      .from(importBatches)
+      .where(
+        and(
+          eq(importBatches.workspaceId, this.workspaceId),
+          lt(importBatches.expiresAt, before),
+          ne(importBatches.storageKey, ""),
+        ),
+      )
+      .orderBy(importBatches.expiresAt)
+      .limit(limit);
+  }
+
+  async markImportFileRemoved(id: bigint): Promise<void> {
+    await this.database
+      .update(importBatches)
+      .set({ storageKey: "", updatedAt: new Date() })
+      .where(and(eq(importBatches.workspaceId, this.workspaceId), eq(importBatches.id, id)));
   }
 
   async findRule(publicId: string): Promise<ScheduledRecurringRule | null> {
@@ -119,6 +146,7 @@ export class PlanningJobRepository implements IPlanningJobRepository {
               ),
             )
             .limit(1)
+            .for("share")
         )[0]
       : undefined;
     if (rule.creditCardId && !card)
@@ -140,7 +168,7 @@ export class PlanningJobRepository implements IPlanningJobRepository {
         description: rule.description,
         occurredOn: logicalDate,
         competenceMonth: logicalDate.slice(0, 7),
-        sourceModule: card ? "CCRC" : "RC",
+        sourceModule: card ? transactionSource.cardRecurring : transactionSource.recurring,
         sourcePublicId: rule.publicId,
         sourceSequence: Number(logicalDate.replaceAll("-", "")),
       })
@@ -158,7 +186,7 @@ export class PlanningJobRepository implements IPlanningJobRepository {
     if (!transactionId || !card) return transactionId;
 
     const cycle = resolveCardCycle(logicalDate, card.closingDay, card.dueDay);
-    const statement = (
+    const materializedStatement = (
       await this.database
         .insert(cardStatements)
         .values({
@@ -176,7 +204,16 @@ export class PlanningJobRepository implements IPlanningJobRepository {
         })
         .returning()
     )[0];
-    if (!statement) throw new Error("Recurring card statement was not materialized.");
+    if (!materializedStatement) throw new Error("Recurring card statement was not materialized.");
+    const statement = (
+      await this.database
+        .select()
+        .from(cardStatements)
+        .where(eq(cardStatements.id, materializedStatement.id))
+        .limit(1)
+        .for("update")
+    )[0];
+    if (!statement) throw new Error("Recurring card statement lock target was not found.");
     if (statement.status !== "OPEN")
       throw new ApplicationError("A fatura da recorrência já está fechada.", {
         category: "conflict",
@@ -187,11 +224,17 @@ export class PlanningJobRepository implements IPlanningJobRepository {
       statementId: statement.id,
       transactionId,
     });
-    const totalCents = statement.totalCents + rule.amountCents;
-    await this.database
-      .update(cardStatements)
-      .set({ totalCents, updatedAt: new Date() })
-      .where(eq(cardStatements.id, statement.id));
+    const updatedStatement = (
+      await this.database
+        .update(cardStatements)
+        .set({
+          totalCents: sql`${cardStatements.totalCents} + ${rule.amountCents}`,
+          updatedAt: new Date(),
+        })
+        .where(eq(cardStatements.id, statement.id))
+        .returning({ totalCents: cardStatements.totalCents })
+    )[0];
+    if (!updatedStatement) throw new Error("Recurring card statement total was not updated.");
     if (!card.paymentAccountId)
       throw new ApplicationError("O cartão não possui conta de pagamento.", {
         category: "validation",
@@ -203,7 +246,7 @@ export class PlanningJobRepository implements IPlanningJobRepository {
       cardName: card.name,
       currency: card.currency,
       dueOn: statement.dueOn,
-      totalCents,
+      totalCents: updatedStatement.totalCents,
       paidCents: statement.paidCents,
     });
     return transactionId;
@@ -223,8 +266,8 @@ export class PlanningJobRepository implements IPlanningJobRepository {
       .where(eq(recurringRules.id, ruleId));
   }
 
-  closeDueStatements(referenceOn: string) {
-    return this.database
+  async closeDueStatements(referenceOn: string) {
+    const closed = await this.database
       .update(cardStatements)
       .set({
         status: "CLOSED",
@@ -240,10 +283,40 @@ export class PlanningJobRepository implements IPlanningJobRepository {
         ),
       )
       .returning({
+        id: cardStatements.id,
         publicId: cardStatements.publicId,
         totalCents: cardStatements.totalCents,
         version: cardStatements.version,
       });
+    if (closed.length > 0)
+      await this.database
+        .update(transactions)
+        .set({
+          status: "CONFIRMED",
+          version: sql`${transactions.version} + 1`,
+          updatedAt: new Date(),
+        })
+        .where(
+          and(
+            eq(transactions.workspaceId, this.workspaceId),
+            eq(transactions.status, "PLANNED"),
+            isNull(transactions.deletedAt),
+            sql`exists (
+              select 1
+              from ${statementCycles}
+              where ${statementCycles.transactionId} = ${transactions.id}
+                and ${statementCycles.statementId} in (${sql.join(
+                  closed.map(({ id }) => sql`${id}`),
+                  sql`, `,
+                )})
+            )`,
+          ),
+        );
+    return closed.map(({ publicId, totalCents, version }) => ({
+      publicId,
+      totalCents,
+      version,
+    }));
   }
 
   async listBudgetConsumption(month: string): Promise<readonly BudgetConsumption[]> {
@@ -266,7 +339,8 @@ export class PlanningJobRepository implements IPlanningJobRepository {
           and(
             eq(transactions.workspaceId, this.workspaceId),
             eq(transactions.competenceMonth, month),
-            eq(transactions.type, "EXPENSE"),
+            inArray(transactions.type, categorizedConsumptionTypes),
+            eq(transactions.currency, budget.currency),
             sql`${transactions.status} <> 'PLANNED'`,
             eq(transactions.categoryId, budget.categoryId),
             isNull(transactions.deletedAt),

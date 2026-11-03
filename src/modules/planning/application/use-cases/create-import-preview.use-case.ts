@@ -51,19 +51,24 @@ export class CreateImportPreviewUseCase {
       });
     const batchId = this.generateId();
     const storageKey = await this.storage.write(context.workspacePublicId, batchId, upload.buffer);
-    return this.unitOfWork.run(context, (repository) =>
-      repository.createPreview(
-        {
-          batchId,
-          fileName,
-          mimeType: upload.mimeType,
-          storageKey,
-          checksum: this.checksum(upload.buffer),
-          fileSize: upload.buffer.length,
-        },
-        rows,
-      ),
-    );
+    try {
+      return await this.unitOfWork.run(context, (repository) =>
+        repository.createPreview(
+          {
+            batchId,
+            fileName,
+            mimeType: upload.mimeType,
+            storageKey,
+            checksum: this.checksum(upload.buffer),
+            fileSize: upload.buffer.length,
+          },
+          rows,
+        ),
+      );
+    } catch (error: unknown) {
+      await this.storage.remove(storageKey).catch(() => undefined);
+      throw error;
+    }
   }
 
   private parse(buffer: Buffer, fileName: string) {

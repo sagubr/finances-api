@@ -15,6 +15,10 @@ import {
   categories,
   transactions,
 } from "#/modules/transactions/infrastructure/database/transactions.schema.js";
+import {
+  cardInstallmentSources,
+  transactionSource,
+} from "#/modules/transactions/public/transaction-source.js";
 import { ApplicationError } from "#/shared/application/application.error.js";
 import { createCursorPage, decodeCursor } from "#/shared/pagination/cursor-pagination.js";
 import { and, asc, desc, eq, inArray, isNull, lt, sql } from "drizzle-orm";
@@ -52,7 +56,10 @@ export class InstallmentRepository implements IInstallmentRepository {
         transactions,
         and(
           eq(transactions.workspaceId, installmentPlans.workspaceId),
-          inArray(transactions.sourceModule, ["RC", "CC"]),
+          inArray(transactions.sourceModule, [
+            transactionSource.recurring,
+            ...cardInstallmentSources,
+          ]),
           eq(transactions.sourcePublicId, installmentPlans.publicId),
           eq(transactions.sourceSequence, 1),
           isNull(transactions.deletedAt),
@@ -141,6 +148,7 @@ export class InstallmentRepository implements IInstallmentRepository {
               ),
             )
             .limit(1)
+            .for("share")
         )[0]
       : null;
     if (input.creditCardId && (!creditCard || !category))
@@ -192,7 +200,9 @@ export class InstallmentRepository implements IInstallmentRepository {
           description: `${input.description} (${item.number}/${input.installments})`,
           occurredOn: item.dueOn,
           competenceMonth: item.dueOn.slice(0, 7),
-          sourceModule: creditCard ? "CC" : "RC",
+          sourceModule: creditCard
+            ? transactionSource.cardInstallment
+            : transactionSource.recurring,
           sourcePublicId: planId,
           sourceSequence: item.number,
           createdBy: this.context.userId,
@@ -207,7 +217,7 @@ export class InstallmentRepository implements IInstallmentRepository {
         if (!transaction) throw new Error("Card installment transaction was not returned.");
         if (!statementPublicId) throw new Error("Card installment statement id is missing.");
         const cycle = resolveCardCycle(item.dueOn, creditCard.closingDay, creditCard.dueDay);
-        const statement = (
+        const materializedStatement = (
           await this.database
             .insert(cardStatements)
             .values({
@@ -225,7 +235,16 @@ export class InstallmentRepository implements IInstallmentRepository {
             })
             .returning()
         )[0];
-        if (!statement) throw new Error("Card statement was not materialized.");
+        if (!materializedStatement) throw new Error("Card statement was not materialized.");
+        const statement = (
+          await this.database
+            .select()
+            .from(cardStatements)
+            .where(eq(cardStatements.id, materializedStatement.id))
+            .limit(1)
+            .for("update")
+        )[0];
+        if (!statement) throw new Error("Card installment statement lock target was not found.");
         if (statement.status !== "OPEN")
           throw new ApplicationError("Uma das faturas do parcelamento já está fechada.", {
             category: "conflict",
@@ -236,20 +255,24 @@ export class InstallmentRepository implements IInstallmentRepository {
           statementId: statement.id,
           transactionId: transaction.id,
         });
-        await this.database
-          .update(cardStatements)
-          .set({
-            totalCents: sql`${cardStatements.totalCents} + ${item.amountCents}`,
-            updatedAt: new Date(),
-          })
-          .where(eq(cardStatements.id, statement.id));
+        const updatedStatement = (
+          await this.database
+            .update(cardStatements)
+            .set({
+              totalCents: sql`${cardStatements.totalCents} + ${item.amountCents}`,
+              updatedAt: new Date(),
+            })
+            .where(eq(cardStatements.id, statement.id))
+            .returning({ totalCents: cardStatements.totalCents })
+        )[0];
+        if (!updatedStatement) throw new Error("Card installment statement total was not updated.");
         await this.projection.sync({
           statementId: statement.publicId,
           accountId: account.id,
           cardName: creditCard.name,
           currency: creditCard.currency,
           dueOn: statement.dueOn,
-          totalCents: statement.totalCents + BigInt(item.amountCents),
+          totalCents: updatedStatement.totalCents,
           paidCents: statement.paidCents,
         });
       }
@@ -295,7 +318,7 @@ export class InstallmentRepository implements IInstallmentRepository {
       .where(
         and(
           eq(transactions.workspaceId, this.context.workspaceId),
-          eq(transactions.sourceModule, "RC"),
+          eq(transactions.sourceModule, transactionSource.recurring),
           eq(transactions.sourcePublicId, planId),
           isNull(transactions.deletedAt),
         ),
@@ -387,7 +410,7 @@ export class InstallmentRepository implements IInstallmentRepository {
       .where(
         and(
           eq(transactions.workspaceId, this.context.workspaceId),
-          eq(transactions.sourceModule, "RC"),
+          eq(transactions.sourceModule, transactionSource.recurring),
           eq(transactions.sourcePublicId, planId),
           isNull(transactions.deletedAt),
         ),
@@ -406,7 +429,7 @@ export class InstallmentRepository implements IInstallmentRepository {
       .where(
         and(
           eq(transactions.workspaceId, this.context.workspaceId),
-          eq(transactions.sourceModule, "RC"),
+          eq(transactions.sourceModule, transactionSource.recurring),
           eq(transactions.sourcePublicId, planId),
           isNull(transactions.deletedAt),
         ),

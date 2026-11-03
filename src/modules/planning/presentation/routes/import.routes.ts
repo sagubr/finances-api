@@ -39,6 +39,7 @@ const errors = {
   404: apiErrorResponseSchema,
   409: apiErrorResponseSchema,
   422: apiErrorResponseSchema,
+  429: apiErrorResponseSchema,
 } as const;
 
 export const importRoutes: FastifyPluginAsyncZod<ImportRoutesOptions> = (app, options) => {
@@ -48,6 +49,7 @@ export const importRoutes: FastifyPluginAsyncZod<ImportRoutesOptions> = (app, op
     "/imports",
     {
       onRequest: csrf,
+      config: { rateLimit: { max: 5, timeWindow: "1 hour" } },
       schema: {
         operationId: "createImportPreview",
         tags: ["Imports"],

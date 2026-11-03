@@ -9,6 +9,17 @@ const looseNumber = (fallback: number) =>
     z.number().int(),
   );
 
+const looseBoolean = (fallback: boolean) =>
+  z.preprocess(
+    (value) =>
+      value === undefined || value === ""
+        ? String(fallback)
+        : typeof value === "boolean"
+          ? String(value)
+          : value,
+    z.enum(["true", "false"]).transform((value) => value === "true"),
+  );
+
 const environmentSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   HOST: z.string().min(1).default("0.0.0.0"),
@@ -31,8 +42,15 @@ const environmentSchema = z.object({
   DB_CONNECTION_TIMEOUT_MS: looseNumber(5_000).pipe(z.number().min(1)),
   COOKIE_SECRET: z.string().min(32).optional(),
   TOKEN_ENCRYPTION_KEY: z.string().min(32).optional(),
+  AUTH_AUTO_CONFIRM_EMAIL: looseBoolean(false),
   REDIS_URL: z.string().min(1).optional(),
   IMPORT_STORAGE_DIR: z.string().min(1).default("/tmp/finances-imports"),
+  IMPORT_STORAGE_QUOTA_BYTES: looseNumber(100 * 1024 * 1024).pipe(
+    z
+      .number()
+      .min(10 * 1024 * 1024)
+      .max(10 * 1024 * 1024 * 1024),
+  ),
   EXPORT_STORAGE_DIR: z.string().min(1).default("/tmp/finances-exports"),
 });
 

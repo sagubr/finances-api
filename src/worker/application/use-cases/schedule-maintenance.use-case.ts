@@ -41,6 +41,13 @@ export class ScheduleMaintenanceUseCase {
             executionKey: `reconcile-budgets:${workspace.id.toString()}:${hourWindow}`,
             payload: { month },
           },
+          {
+            publicId: this.generateId(),
+            workspaceId: workspace.id,
+            name: "clean-expired-import-files",
+            executionKey: `clean-expired-import-files:${workspace.id.toString()}:${referenceOn}`,
+            payload: { referenceOn },
+          },
           ...ruleIds.map((ruleId) => ({
             publicId: this.generateId(),
             workspaceId: workspace.id,

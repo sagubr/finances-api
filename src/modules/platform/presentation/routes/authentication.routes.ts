@@ -95,6 +95,7 @@ export const authenticationRoutes: FastifyPluginAsyncZod = (app) => {
     "/auth/password/change",
     {
       onRequest: csrf,
+      config: { rateLimit: { max: 5, timeWindow: "15 minutes" } },
       schema: {
         operationId: "changePassword",
         tags: ["Identity"],

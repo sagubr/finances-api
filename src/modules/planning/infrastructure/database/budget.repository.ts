@@ -4,10 +4,12 @@ import { reachedBudgetThresholds } from "#/modules/planning/domain/budget-thresh
 import type { BudgetView } from "#/modules/planning/dtos/planning.dto.js";
 import { budgets } from "#/modules/planning/infrastructure/database/planning.schema.js";
 import type { RequestContext } from "#/modules/platform/application/request-context.js";
+import { workspaces } from "#/modules/platform/infrastructure/database/platform.schema.js";
 import {
   categories,
   transactions,
 } from "#/modules/transactions/infrastructure/database/transactions.schema.js";
+import { categorizedConsumptionTypes } from "#/modules/transactions/public/transaction-source.js";
 import { ApplicationError } from "#/shared/application/application.error.js";
 import { createCursorPage, decodeCursor } from "#/shared/pagination/cursor-pagination.js";
 import { and, desc, eq, inArray, isNull, lt, sql } from "drizzle-orm";
@@ -55,6 +57,19 @@ export class BudgetRepository implements IBudgetRepository {
     return createCursorPage(rows.map(mapBudget), query.limit);
   }
   async create(publicId: string, input: Parameters<IBudgetRepository["create"]>[1]) {
+    const workspace = (
+      await this.database
+        .select({ baseCurrency: workspaces.baseCurrency })
+        .from(workspaces)
+        .where(eq(workspaces.id, this.context.workspaceId))
+        .limit(1)
+    )[0];
+    if (!workspace || workspace.baseCurrency !== input.currency)
+      throw new ApplicationError("A moeda do orçamento deve ser a moeda-base do workspace.", {
+        category: "validation",
+        code: "BUDGET_CURRENCY_NOT_BASE",
+        details: workspace ? { baseCurrency: workspace.baseCurrency } : undefined,
+      });
     const category = (
       await this.database
         .select({ id: categories.id, name: categories.name })
@@ -63,6 +78,7 @@ export class BudgetRepository implements IBudgetRepository {
           and(
             eq(categories.workspaceId, this.context.workspaceId),
             eq(categories.publicId, input.categoryId),
+            eq(categories.type, "EXPENSE"),
             eq(categories.active, true),
           ),
         )
@@ -206,7 +222,8 @@ export class BudgetRepository implements IBudgetRepository {
                 and(
                   eq(transactions.workspaceId, this.context.workspaceId),
                   eq(transactions.competenceMonth, query.month),
-                  eq(transactions.type, "EXPENSE"),
+                  inArray(transactions.type, categorizedConsumptionTypes),
+                  eq(transactions.currency, entry.budget.currency),
                   inArray(transactions.categoryId, target),
                   isNull(transactions.deletedAt),
                 ),

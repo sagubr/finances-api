@@ -10,7 +10,7 @@ export const registerPlatform = async (
   config: RuntimeConfig,
 ): Promise<void> => {
   await registerCors(app, config);
-  await registerSecurity(app);
+  await registerSecurity(app, config);
   await registerHttpFoundation(app, config);
   await registerSwagger(app, config);
 };

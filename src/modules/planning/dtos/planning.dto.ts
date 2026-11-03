@@ -45,6 +45,10 @@ export const recurringInputSchema = z
   .refine((value) => !value.creditCardId || value.type === "EXPENSE", {
     message: "Credit card recurrences must be expenses.",
     path: ["type"],
+  })
+  .refine((value) => !value.creditCardId || Boolean(value.categoryId), {
+    message: "Credit card recurrences require an expense category.",
+    path: ["categoryId"],
   });
 
 export const installmentsInputSchema = z.object({

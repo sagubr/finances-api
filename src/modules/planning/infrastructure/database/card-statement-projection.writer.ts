@@ -1,6 +1,10 @@
 import type { TenantDatabase } from "#/infrastructure/database/tenant-unit-of-work.js";
 import { transactions } from "#/modules/transactions/infrastructure/database/transactions.schema.js";
-import { and, eq, sql } from "drizzle-orm";
+import {
+  cardProjectionSources,
+  transactionSource,
+} from "#/modules/transactions/public/transaction-source.js";
+import { and, eq, inArray, sql } from "drizzle-orm";
 
 type StatementProjection = Readonly<{
   statementId: string;
@@ -35,10 +39,43 @@ export class CardStatementProjectionWriter {
         .where(
           and(
             eq(transactions.workspaceId, this.context.workspaceId),
-            eq(transactions.sourceModule, "CCP"),
+            inArray(transactions.sourceModule, cardProjectionSources),
             eq(transactions.sourcePublicId, input.statementId),
           ),
         );
+      return;
+    }
+
+    const existing = (
+      await this.database
+        .select({ id: transactions.id })
+        .from(transactions)
+        .where(
+          and(
+            eq(transactions.workspaceId, this.context.workspaceId),
+            inArray(transactions.sourceModule, cardProjectionSources),
+            eq(transactions.sourcePublicId, input.statementId),
+          ),
+        )
+        .limit(1)
+    )[0];
+    if (existing) {
+      await this.database
+        .update(transactions)
+        .set({
+          accountId: input.accountId,
+          amountCents: remainingCents,
+          description: `Fatura ${input.cardName}`,
+          occurredOn: input.dueOn,
+          competenceMonth: input.dueOn.slice(0, 7),
+          status: "PLANNED",
+          settledOn: null,
+          deletedAt: null,
+          version: sql`${transactions.version} + 1`,
+          updatedAt: new Date(),
+          updatedBy: this.context.userId,
+        })
+        .where(eq(transactions.id, existing.id));
       return;
     }
 
@@ -55,7 +92,7 @@ export class CardStatementProjectionWriter {
         description: `Fatura ${input.cardName}`,
         occurredOn: input.dueOn,
         competenceMonth: input.dueOn.slice(0, 7),
-        sourceModule: "CCP",
+        sourceModule: transactionSource.cardProjection,
         sourcePublicId: input.statementId,
         sourceSequence: 1,
         createdBy: this.context.userId,

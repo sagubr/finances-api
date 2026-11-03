@@ -5,6 +5,45 @@ import { read, utils } from "@e965/xlsx";
 import { parse as parseCsv } from "csv-parse/sync";
 
 type RawRow = Record<string, string>;
+const endOfCentralDirectorySignature = 0x06054b50;
+const centralDirectoryEntrySignature = 0x02014b50;
+const maxXlsxUncompressedBytes = 50 * 1024 * 1024;
+const maxXlsxEntries = 10_000;
+
+const assertSafeXlsxArchive = (buffer: Buffer): void => {
+  const minimumEndRecordSize = 22;
+  const searchStart = Math.max(0, buffer.length - 65_535 - minimumEndRecordSize);
+  let endOffset = -1;
+  for (let offset = buffer.length - minimumEndRecordSize; offset >= searchStart; offset -= 1) {
+    if (buffer.readUInt32LE(offset) !== endOfCentralDirectorySignature) continue;
+    endOffset = offset;
+    break;
+  }
+  if (endOffset < 0) throw new Error("XLSX ZIP directory is missing.");
+  const entryCount = buffer.readUInt16LE(endOffset + 10);
+  const directorySize = buffer.readUInt32LE(endOffset + 12);
+  const directoryOffset = buffer.readUInt32LE(endOffset + 16);
+  if (entryCount > maxXlsxEntries || directoryOffset + directorySize > endOffset)
+    throw new Error("XLSX ZIP directory exceeds safe limits.");
+
+  let offset = directoryOffset;
+  let totalUncompressedBytes = 0;
+  for (let entry = 0; entry < entryCount; entry += 1) {
+    if (offset + 46 > endOffset || buffer.readUInt32LE(offset) !== centralDirectoryEntrySignature)
+      throw new Error("XLSX ZIP directory is invalid.");
+    const uncompressedBytes = buffer.readUInt32LE(offset + 24);
+    if (uncompressedBytes === 0xffffffff)
+      throw new Error("ZIP64 XLSX files are not accepted for import.");
+    totalUncompressedBytes += uncompressedBytes;
+    if (totalUncompressedBytes > maxXlsxUncompressedBytes)
+      throw new Error("XLSX expanded content exceeds the safe limit.");
+    const fileNameLength = buffer.readUInt16LE(offset + 28);
+    const extraLength = buffer.readUInt16LE(offset + 30);
+    const commentLength = buffer.readUInt16LE(offset + 32);
+    offset += 46 + fileNameLength + extraLength + commentLength;
+  }
+  if (offset > directoryOffset + directorySize) throw new Error("XLSX ZIP directory is invalid.");
+};
 
 const normalizeHeader = (value: string): string =>
   value
@@ -99,10 +138,13 @@ export class ImportFileParser implements IImportFileParser {
         bom: true,
         columns: (headers: string[]) => headers.map(normalizeHeader),
         delimiter: buffer.subarray(0, buffer.indexOf("\n")).includes(59) ? ";" : ",",
+        max_record_size: 64 * 1024,
         skip_empty_lines: true,
+        to_line: 20_002,
         relax_column_count: true,
         trim: true,
       });
+    assertSafeXlsxArchive(buffer);
     const workbook = read(buffer, {
       type: "buffer",
       sheetRows: 20_002,

@@ -25,8 +25,7 @@ export class AuthenticateUserUseCase {
     const attemptedAt = this.now();
     const emailHash = this.hash(command.email);
     const ipHash = this.hash(command.ip);
-    const recentFailures = await this.repository.countRecentFailedLoginAttempts(
-      emailHash,
+    const recentFailures = await this.repository.countRecentFailedLoginAttemptsByIp(
       ipHash,
       new Date(attemptedAt.getTime() - 15 * 60 * 1_000),
     );
@@ -36,9 +35,10 @@ export class AuthenticateUserUseCase {
         code: "LOGIN_RATE_LIMITED",
       });
     const credential = await this.repository.findCredentialByEmail(command.email);
-    const isValid = await this.verifyPassword(credential?.passwordHash, command.password);
-    await this.repository.recordLoginAttempt(emailHash, ipHash, isValid);
-    if (!credential || !isValid)
+    const passwordMatches = await this.verifyPassword(credential?.passwordHash, command.password);
+    const canAuthenticate = Boolean(credential?.isEmailConfirmed && passwordMatches);
+    await this.repository.recordLoginAttempt(emailHash, ipHash, canAuthenticate);
+    if (!credential || !canAuthenticate)
       throw new ApplicationError("E-mail ou senha inválidos.", {
         category: "unauthenticated",
         code: "INVALID_CREDENTIALS",

@@ -11,6 +11,15 @@ const validEnvironment = {
   DB_SSL_MODE: "disabled",
 } as const;
 
+const productionDatabase = {
+  DATABASE_HOST: "db.example.com",
+  DATABASE_USER: "finances_app",
+  DATABASE_PASSWORD: "production-database-password",
+  DB_SSL_MODE: "verify-full",
+  DB_SSL_CA_BASE64: Buffer.from("certificate-authority").toString("base64"),
+  DB_SSL_SERVER_NAME: "db.example.com",
+} as const;
+
 describe("runtime configuration", () => {
   it("builds the PostgreSQL pool configuration from validated environment fields", () => {
     const config = readRuntimeConfig(validEnvironment);
@@ -59,9 +68,28 @@ describe("runtime configuration", () => {
     );
   });
 
+  it("allows email auto-confirmation only outside production", () => {
+    expect(
+      readRuntimeConfig({ ...validEnvironment, AUTH_AUTO_CONFIRM_EMAIL: "true" }).autoConfirmEmail,
+    ).toBe(true);
+
+    expect(() =>
+      readRuntimeConfig({
+        ...validEnvironment,
+        ...productionDatabase,
+        NODE_ENV: "production",
+        COOKIE_SECRET: "cookie-secret-that-is-at-least-32-characters",
+        TOKEN_ENCRYPTION_KEY: "token-secret-that-is-at-least-32-characters",
+        CORS_ALLOWED_ORIGINS: "https://app.example.com",
+        AUTH_AUTO_CONFIRM_EMAIL: "true",
+      }),
+    ).toThrow("AUTH_AUTO_CONFIRM_EMAIL");
+  });
+
   it("requires explicit HTTPS CORS origins in production", () => {
     const production = {
       ...validEnvironment,
+      ...productionDatabase,
       NODE_ENV: "production",
       COOKIE_SECRET: "cookie-secret-that-is-at-least-32-characters",
       TOKEN_ENCRYPTION_KEY: "token-secret-that-is-at-least-32-characters",
@@ -75,5 +103,48 @@ describe("runtime configuration", () => {
       readRuntimeConfig({ ...production, CORS_ALLOWED_ORIGINS: "https://app.example.com" })
         .corsAllowedOrigins,
     ).toEqual(["https://app.example.com"]);
+  });
+
+  it("rejects privileged default database credentials and unverified TLS in production", () => {
+    const production = {
+      ...validEnvironment,
+      NODE_ENV: "production",
+      COOKIE_SECRET: "cookie-secret-that-is-at-least-32-characters",
+      TOKEN_ENCRYPTION_KEY: "token-secret-that-is-at-least-32-characters",
+      CORS_ALLOWED_ORIGINS: "https://app.example.com",
+    } as const;
+
+    expect(() =>
+      readRuntimeConfig({
+        ...production,
+        DATABASE_USER: "postgres",
+        DATABASE_PASSWORD: "postgres",
+      }),
+    ).toThrow("restricted runtime role");
+    expect(() =>
+      readRuntimeConfig({
+        ...production,
+        DATABASE_USER: "finances_app",
+        DATABASE_PASSWORD: "production-database-password",
+      }),
+    ).toThrow("DB_SSL_MODE=verify-full");
+  });
+
+  it("requires encrypted Redis transport in production", () => {
+    const production = {
+      ...validEnvironment,
+      ...productionDatabase,
+      NODE_ENV: "production",
+      COOKIE_SECRET: "cookie-secret-that-is-at-least-32-characters",
+      TOKEN_ENCRYPTION_KEY: "token-secret-that-is-at-least-32-characters",
+      CORS_ALLOWED_ORIGINS: "https://app.example.com",
+    } as const;
+
+    expect(() =>
+      readRuntimeConfig({ ...production, REDIS_URL: "redis://cache.example.com" }),
+    ).toThrow("rediss");
+    expect(
+      readRuntimeConfig({ ...production, REDIS_URL: "rediss://cache.example.com" }).redisUrl,
+    ).toBe("rediss://cache.example.com");
   });
 });

@@ -53,6 +53,7 @@ export const authenticationControllers = {
       hash,
       encryptToken,
       () => new Date(),
+      authConfig.autoConfirmEmail,
     ),
   ),
   resendConfirmation: new ResendConfirmationController(new ResendConfirmationUseCase(emailService)),

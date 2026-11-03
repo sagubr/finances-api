@@ -9,17 +9,27 @@ import type {
 import {
   cardStatements,
   creditCards,
+  installmentPlans,
+  recurringRules,
   statementCycles,
   statementPayments,
 } from "#/modules/planning/infrastructure/database/planning.schema.js";
 import type { RequestContext } from "#/modules/platform/application/request-context.js";
-import { outboxEvents } from "#/modules/platform/infrastructure/database/platform.schema.js";
+import {
+  outboxEvents,
+  workspaces,
+} from "#/modules/platform/infrastructure/database/platform.schema.js";
 import {
   accounts,
   categories,
   transactionHistory,
   transactions,
 } from "#/modules/transactions/infrastructure/database/transactions.schema.js";
+import {
+  isManualCardPurchaseSource,
+  legacyCardSources,
+  transactionSource,
+} from "#/modules/transactions/public/transaction-source.js";
 import { ApplicationError } from "#/shared/application/application.error.js";
 import { createCursorPage, decodeCursor } from "#/shared/pagination/cursor-pagination.js";
 import { and, desc, eq, inArray, isNull, lt, sql } from "drizzle-orm";
@@ -91,6 +101,7 @@ export class CardRepository implements ICardRepository {
   }
 
   async createCard(publicId: string, input: Parameters<ICardRepository["createCard"]>[1]) {
+    await this.requireWorkspaceCurrency(input.currency);
     const paymentAccount = input.paymentAccountId
       ? (
           await this.database
@@ -134,6 +145,85 @@ export class CardRepository implements ICardRepository {
   }
 
   async updateCard(publicId: string, input: CardPatch) {
+    const current = (
+      await this.database
+        .select()
+        .from(creditCards)
+        .where(
+          and(
+            eq(creditCards.workspaceId, this.context.workspaceId),
+            eq(creditCards.publicId, publicId),
+            eq(creditCards.active, true),
+          ),
+        )
+        .limit(1)
+        .for("update")
+    )[0];
+    if (!current || current.version !== input.expectedVersion)
+      this.versionConflict("O cartão foi alterado por outra operação.", current?.version);
+    const currentPaymentAccountPublicId = current.paymentAccountId
+      ? (
+          await this.database
+            .select({ publicId: accounts.publicId })
+            .from(accounts)
+            .where(eq(accounts.id, current.paymentAccountId))
+            .limit(1)
+        )[0]?.publicId
+      : undefined;
+    const paymentAccountChange =
+      input.paymentAccountId !== undefined &&
+      input.paymentAccountId !== currentPaymentAccountPublicId;
+    const structuralChange =
+      input.currency !== current.currency ||
+      input.closingDay !== current.closingDay ||
+      input.dueDay !== current.dueDay ||
+      input.accountingMode !== current.accountingMode ||
+      paymentAccountChange;
+    if (structuralChange) {
+      const materializedStatement = (
+        await this.database
+          .select({ id: cardStatements.id })
+          .from(cardStatements)
+          .where(
+            and(
+              eq(cardStatements.workspaceId, this.context.workspaceId),
+              eq(cardStatements.cardId, current.id),
+            ),
+          )
+          .limit(1)
+      )[0];
+      const recurringDependency = (
+        await this.database
+          .select({ id: recurringRules.id })
+          .from(recurringRules)
+          .where(
+            and(
+              eq(recurringRules.workspaceId, this.context.workspaceId),
+              eq(recurringRules.creditCardId, current.id),
+              isNull(recurringRules.deletedAt),
+            ),
+          )
+          .limit(1)
+      )[0];
+      const installmentDependency = (
+        await this.database
+          .select({ id: installmentPlans.id })
+          .from(installmentPlans)
+          .where(
+            and(
+              eq(installmentPlans.workspaceId, this.context.workspaceId),
+              eq(installmentPlans.creditCardId, current.id),
+            ),
+          )
+          .limit(1)
+      )[0];
+      if (materializedStatement || recurringDependency || installmentDependency)
+        throw new ApplicationError(
+          "Conta de pagamento, moeda, fechamento, vencimento e modo contábil não podem mudar após a primeira fatura, recorrência ou parcelamento.",
+          { category: "conflict", code: "CARD_STRUCTURE_IMMUTABLE" },
+        );
+    }
+    await this.requireWorkspaceCurrency(input.currency);
     const paymentAccount = input.paymentAccountId
       ? (
           await this.database
@@ -232,6 +322,7 @@ export class CardRepository implements ICardRepository {
           ),
         )
         .limit(1)
+        .for("share")
     )[0];
     if (!card)
       throw new ApplicationError("Cartão não encontrado.", {
@@ -325,7 +416,7 @@ export class CardRepository implements ICardRepository {
         description: input.description,
         occurredOn: input.occurredOn,
         competenceMonth: input.occurredOn.slice(0, 7),
-        sourceModule: "CC",
+        sourceModule: transactionSource.cardPurchase,
         sourcePublicId: statement.publicId,
         sourceSequence: sequence,
         createdBy: this.context.userId,
@@ -621,8 +712,11 @@ export class CardRepository implements ICardRepository {
         occurredOn: transaction.occurredOn,
         editable:
           selected.statement.status === "OPEN" &&
-          transaction.sourceModule === "CC" &&
-          transaction.sourcePublicId === selected.statement.publicId,
+          isManualCardPurchaseSource(
+            transaction.sourceModule,
+            transaction.sourcePublicId,
+            selected.statement.publicId,
+          ),
         version: transaction.version,
       })),
       query.limit,
@@ -654,6 +748,27 @@ export class CardRepository implements ICardRepository {
       )
       .returning();
     const statement = rows[0] ?? this.versionConflict("A fatura não está aberta ou foi alterada.");
+    await this.database
+      .update(transactions)
+      .set({
+        status: "CONFIRMED",
+        version: sql`${transactions.version} + 1`,
+        updatedAt: new Date(),
+        updatedBy: this.context.userId,
+      })
+      .where(
+        and(
+          eq(transactions.workspaceId, this.context.workspaceId),
+          eq(transactions.status, "PLANNED"),
+          isNull(transactions.deletedAt),
+          sql`exists (
+            select 1
+            from ${statementCycles}
+            where ${statementCycles.transactionId} = ${transactions.id}
+              and ${statementCycles.statementId} = ${statement.id}
+          )`,
+        ),
+      );
     const result = {
       id: statement.publicId,
       status: "CLOSED" as const,
@@ -735,7 +850,7 @@ export class CardRepository implements ICardRepository {
         occurredOn: input.paidOn,
         competenceMonth: input.paidOn.slice(0, 7),
         settledOn: input.paidOn,
-        sourceModule: "CC",
+        sourceModule: transactionSource.cardPayment,
         sourcePublicId: ids.payment,
         sourceSequence: 1,
         createdBy: this.context.userId,
@@ -797,6 +912,21 @@ export class CardRepository implements ICardRepository {
       code: "STATEMENT_NOT_FOUND",
     });
   }
+  private async requireWorkspaceCurrency(currency: string): Promise<void> {
+    const workspace = (
+      await this.database
+        .select({ baseCurrency: workspaces.baseCurrency })
+        .from(workspaces)
+        .where(eq(workspaces.id, this.context.workspaceId))
+        .limit(1)
+    )[0];
+    if (workspace?.baseCurrency === currency) return;
+    throw new ApplicationError("A moeda do cartão deve ser a moeda-base do workspace.", {
+      category: "validation",
+      code: "CARD_CURRENCY_NOT_BASE",
+      details: workspace ? { baseCurrency: workspace.baseCurrency } : undefined,
+    });
+  }
   private async requireEditablePurchase(cardPublicId: string, purchasePublicId: string) {
     const selected = (
       await this.database
@@ -821,9 +951,11 @@ export class CardRepository implements ICardRepository {
         category: "not-found",
         code: "CARD_PURCHASE_NOT_FOUND",
       });
-    const manualPurchase =
-      selected.transaction.sourceModule === "CC" &&
-      selected.transaction.sourcePublicId === selected.statement.publicId;
+    const manualPurchase = isManualCardPurchaseSource(
+      selected.transaction.sourceModule,
+      selected.transaction.sourcePublicId,
+      selected.statement.publicId,
+    );
     if (!manualPurchase)
       throw new ApplicationError(
         "Edite esta compra pela recorrência ou pelo parcelamento de origem.",
@@ -859,7 +991,10 @@ export class CardRepository implements ICardRepository {
         .where(
           and(
             eq(transactions.workspaceId, this.context.workspaceId),
-            eq(transactions.sourceModule, "CC"),
+            inArray(transactions.sourceModule, [
+              transactionSource.cardPurchase,
+              legacyCardSources.purchaseOrInstallmentOrPayment,
+            ]),
             eq(transactions.sourcePublicId, statementPublicId),
           ),
         )

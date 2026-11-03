@@ -50,4 +50,33 @@ describe("import file parser", () => {
     expect(row?.normalized).not.toHaveProperty("occurredOn");
     expect(row?.normalized).not.toHaveProperty("accountId");
   });
+
+  it("rejects XLSX archives whose declared expanded content exceeds the safe limit", () => {
+    const centralDirectory = Buffer.alloc(46);
+    centralDirectory.writeUInt32LE(0x02014b50, 0);
+    centralDirectory.writeUInt32LE(51 * 1024 * 1024, 24);
+    const endRecord = Buffer.alloc(22);
+    endRecord.writeUInt32LE(0x06054b50, 0);
+    endRecord.writeUInt16LE(1, 10);
+    endRecord.writeUInt32LE(centralDirectory.length, 12);
+    endRecord.writeUInt32LE(0, 16);
+
+    expect(() => parser.parse(Buffer.concat([centralDirectory, endRecord]), "unsafe.xlsx")).toThrow(
+      "expanded content",
+    );
+  });
+
+  it("stops CSV parsing at the preview row boundary", () => {
+    const rows = Array.from(
+      { length: 20_100 },
+      () => "02/11/2026;Mercado;10,00;DESPESA;019a4c64-9a81-7000-8000-000000000003",
+    );
+
+    expect(
+      parser.parse(
+        Buffer.from(`data;descricao;valor;tipo;conta_id\n${rows.join("\n")}`),
+        "bounded.csv",
+      ),
+    ).toHaveLength(20_001);
+  });
 });

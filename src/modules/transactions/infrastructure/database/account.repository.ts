@@ -67,6 +67,7 @@ export class AccountRepository implements IAccountRepository {
     actorId: bigint,
     input: Parameters<IAccountRepository["create"]>[2],
   ) {
+    await this.requireWorkspaceCurrency(input.currency);
     const rows = await this.database
       .insert(accounts)
       .values({
@@ -85,6 +86,22 @@ export class AccountRepository implements IAccountRepository {
     const account = rows[0];
     if (!account) throw new Error("Account insert did not return a record.");
     return mapAccount(account);
+  }
+
+  private async requireWorkspaceCurrency(currency: string): Promise<void> {
+    const workspace = (
+      await this.database
+        .select({ baseCurrency: workspaces.baseCurrency })
+        .from(workspaces)
+        .where(eq(workspaces.id, this.workspaceId))
+        .limit(1)
+    )[0];
+    if (workspace?.baseCurrency === currency) return;
+    throw new ApplicationError("A moeda da conta deve ser a moeda-base do workspace.", {
+      category: "validation",
+      code: "ACCOUNT_CURRENCY_NOT_BASE",
+      details: workspace ? { baseCurrency: workspace.baseCurrency } : undefined,
+    });
   }
 
   async update(publicId: string, actorId: bigint, input: AccountPatch) {

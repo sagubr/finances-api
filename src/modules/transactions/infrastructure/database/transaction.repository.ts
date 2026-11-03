@@ -1,6 +1,9 @@
 import type { TenantDatabase } from "#/infrastructure/database/tenant-unit-of-work.js";
 import type { RequestContext } from "#/modules/platform/application/request-context.js";
-import { outboxEvents } from "#/modules/platform/infrastructure/database/platform.schema.js";
+import {
+  outboxEvents,
+  workspaces,
+} from "#/modules/platform/infrastructure/database/platform.schema.js";
 import type {
   ITransactionRepository,
   MonthlyTransactionEntry,
@@ -21,7 +24,7 @@ import {
   transferPairs,
 } from "#/modules/transactions/infrastructure/database/transactions.schema.js";
 import { ApplicationError } from "#/shared/application/application.error.js";
-import { and, desc, eq, ilike, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, ilike, inArray, isNull, or, sql } from "drizzle-orm";
 
 type TransactionRow = typeof transactions.$inferSelect;
 type JoinedTransaction = Readonly<{
@@ -175,6 +178,10 @@ export class TransactionRepository implements ITransactionRepository {
         description: input.description,
         occurredOn: input.occurredOn,
         competenceMonth: input.occurredOn?.slice(0, 7),
+        settledOn:
+          input.occurredOn !== undefined && current.transaction.status === "SETTLED"
+            ? input.occurredOn
+            : undefined,
         version: sql`${transactions.version} + 1`,
         updatedBy: this.context.userId,
         updatedAt: new Date(),
@@ -199,7 +206,6 @@ export class TransactionRepository implements ITransactionRepository {
 
   async changeStatus(publicId: string, expectedVersion: number, status: "CONFIRMED" | "SETTLED") {
     const current = await this.requireRow(publicId);
-    this.rejectTransfer(current.transaction);
     this.rejectCardManagedTransaction(current.transaction);
     this.requireVersion(current.transaction, expectedVersion);
     const expectedCurrentStatus = status === "CONFIRMED" ? "PLANNED" : "CONFIRMED";
@@ -209,6 +215,8 @@ export class TransactionRepository implements ITransactionRepository {
         code: "TRANSACTION_STATUS_TRANSITION_INVALID",
         details: { currentStatus: current.transaction.status, targetStatus: status },
       });
+    if (current.transaction.type === "TRANSFER")
+      return this.changeTransferPairStatus(current, expectedVersion, status, expectedCurrentStatus);
     const rows = await this.database
       .update(transactions)
       .set({
@@ -248,6 +256,13 @@ export class TransactionRepository implements ITransactionRepository {
         category: "validation",
         code: "TRANSACTION_STATUS_CANNOT_BE_REVERTED",
       });
+    if (current.transaction.type === "TRANSFER")
+      return this.changeTransferPairStatus(
+        current,
+        expectedVersion,
+        targetStatus,
+        current.transaction.status,
+      );
     const rows = await this.database
       .update(transactions)
       .set({
@@ -410,10 +425,12 @@ export class TransactionRepository implements ITransactionRepository {
       })
       .from(transactions)
       .innerJoin(accounts, eq(accounts.id, transactions.accountId))
+      .innerJoin(workspaces, eq(workspaces.id, accounts.workspaceId))
       .where(
         and(
           eq(transactions.workspaceId, this.context.workspaceId),
           eq(transactions.competenceMonth, month),
+          eq(transactions.currency, workspaces.baseCurrency),
           sql`${accounts.type} <> 'BENEFIT'`,
         ),
       );
@@ -506,6 +523,86 @@ export class TransactionRepository implements ITransactionRepository {
       category: "validation",
       code: "TRANSFER_COMMAND_REQUIRED",
     });
+  }
+
+  private async changeTransferPairStatus(
+    current: JoinedTransaction,
+    expectedVersion: number,
+    targetStatus: "PLANNED" | "CONFIRMED" | "SETTLED",
+    expectedCurrentStatus: "PLANNED" | "CONFIRMED" | "SETTLED",
+  ): Promise<TransactionView> {
+    const pair = (
+      await this.database
+        .select({
+          debitTransactionId: transferPairs.debitTransactionId,
+          creditTransactionId: transferPairs.creditTransactionId,
+        })
+        .from(transferPairs)
+        .where(
+          and(
+            eq(transferPairs.workspaceId, this.context.workspaceId),
+            or(
+              eq(transferPairs.debitTransactionId, current.transaction.id),
+              eq(transferPairs.creditTransactionId, current.transaction.id),
+            ),
+          ),
+        )
+        .limit(1)
+        .for("update")
+    )[0];
+    if (!pair)
+      throw new ApplicationError("O par da transferência não foi encontrado.", {
+        category: "conflict",
+        code: "TRANSFER_PAIR_INCONSISTENT",
+      });
+    const rows = await this.database
+      .update(transactions)
+      .set({
+        status: targetStatus,
+        settledOn: targetStatus === "SETTLED" ? current.transaction.occurredOn : null,
+        version: sql`${transactions.version} + 1`,
+        updatedBy: this.context.userId,
+        updatedAt: new Date(),
+      })
+      .where(
+        and(
+          eq(transactions.workspaceId, this.context.workspaceId),
+          inArray(transactions.id, [pair.debitTransactionId, pair.creditTransactionId]),
+          eq(transactions.version, expectedVersion),
+          eq(transactions.status, expectedCurrentStatus),
+          isNull(transactions.deletedAt),
+        ),
+      )
+      .returning();
+    if (rows.length !== 2) this.throwVersionConflict(current.transaction.version);
+    const updatedPairs = await this.database
+      .select({ transaction: transactions, accountPublicId: accounts.publicId })
+      .from(transactions)
+      .innerJoin(accounts, eq(accounts.id, transactions.accountId))
+      .where(inArray(transactions.id, [pair.debitTransactionId, pair.creditTransactionId]));
+    const snapshots = updatedPairs.map(({ transaction, accountPublicId }) =>
+      mapTransaction({ transaction, accountPublicId, categoryPublicId: null }),
+    );
+    const selected = snapshots.find(({ id }) => id === current.transaction.publicId);
+    if (!selected) throw new Error("Transfer status update did not return the selected leg.");
+    const confirming = targetStatus === "CONFIRMED" && expectedCurrentStatus === "PLANNED";
+    const action =
+      targetStatus === "SETTLED" ? "SETTLED" : confirming ? "CONFIRMED" : "STATUS_REVERTED";
+    const transactionIds = new Map(rows.map(({ publicId, id }) => [publicId, id]));
+    for (const snapshot of snapshots) {
+      const transactionId = transactionIds.get(snapshot.id);
+      if (!transactionId) throw new Error("Transfer status history target was not returned.");
+      await this.writeHistory(transactionId, action, snapshot);
+      await this.writeEvent(
+        targetStatus === "SETTLED"
+          ? "TransactionSettled"
+          : confirming
+            ? "TransactionConfirmed"
+            : "TransactionStatusReverted",
+        snapshot,
+      );
+    }
+    return selected;
   }
 
   private rejectCardManagedTransaction(row: TransactionRow): void {

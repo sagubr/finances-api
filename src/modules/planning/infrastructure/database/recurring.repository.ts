@@ -17,6 +17,10 @@ import {
   categories,
   transactions,
 } from "#/modules/transactions/infrastructure/database/transactions.schema.js";
+import {
+  cardRecurringSources,
+  transactionSource,
+} from "#/modules/transactions/public/transaction-source.js";
 import { ApplicationError } from "#/shared/application/application.error.js";
 import { createCursorPage, decodeCursor } from "#/shared/pagination/cursor-pagination.js";
 import { and, desc, eq, inArray, isNull, lt, sql } from "drizzle-orm";
@@ -132,6 +136,7 @@ export class RecurringRepository implements IRecurringRepository {
             ),
           )
           .limit(1)
+          .for("share")
       : [];
     const account = accountRows[0];
     const category = categoryRows[0];
@@ -154,9 +159,10 @@ export class RecurringRepository implements IRecurringRepository {
             ),
           )
           .limit(1)
+          .for("share")
       : [];
     const card = cardRows[0];
-    if (input.creditCardId && !card)
+    if (input.creditCardId && (!card || !category))
       throw new ApplicationError("Cartão e conta de pagamento incompatíveis.", {
         category: "validation",
         code: "RECURRENCE_CARD_INVALID",
@@ -299,7 +305,7 @@ export class RecurringRepository implements IRecurringRepository {
         .where(
           and(
             eq(transactions.workspaceId, this.context.workspaceId),
-            inArray(transactions.sourceModule, ["RC", "CCRC"]),
+            eq(transactions.sourceModule, transactionSource.recurring),
             eq(transactions.sourcePublicId, publicId),
             eq(transactions.status, "PLANNED"),
             isNull(transactions.deletedAt),
@@ -358,9 +364,10 @@ export class RecurringRepository implements IRecurringRepository {
       .where(
         and(
           eq(transactions.workspaceId, this.context.workspaceId),
-          eq(transactions.sourceModule, "CCRC"),
+          inArray(transactions.sourceModule, cardRecurringSources),
           eq(transactions.sourcePublicId, publicId),
           eq(transactions.status, "PLANNED"),
+          eq(cardStatements.status, "OPEN"),
           isNull(transactions.deletedAt),
         ),
       );
@@ -374,18 +381,74 @@ export class RecurringRepository implements IRecurringRepository {
         removedCents: (current?.removedCents ?? 0n) + row.amountCents,
       });
     }
+    const lockedUpdates: Array<
+      Readonly<{
+        statement: (typeof rows)[number];
+        totalCents: bigint;
+        paidCents: bigint;
+      }>
+    > = [];
+    const orderedStatements = [...totals.values()].sort((left, right) =>
+      left.statementId < right.statementId ? -1 : left.statementId > right.statementId ? 1 : 0,
+    );
+    for (const statement of orderedStatements) {
+      const lockedStatement = (
+        await this.database
+          .select({
+            status: cardStatements.status,
+            totalCents: cardStatements.totalCents,
+            paidCents: cardStatements.paidCents,
+          })
+          .from(cardStatements)
+          .where(eq(cardStatements.id, statement.statementId))
+          .limit(1)
+          .for("update")
+      )[0];
+      if (!lockedStatement) throw new Error("Recurring statement lock target was not found.");
+      if (lockedStatement.status !== "OPEN")
+        throw new ApplicationError("A recorrência possui uma fatura que já foi fechada.", {
+          category: "conflict",
+          code: "RECURRENCE_STATEMENT_IMMUTABLE",
+        });
+      const totalCents = lockedStatement.totalCents - statement.removedCents;
+      if (totalCents < lockedStatement.paidCents)
+        throw new ApplicationError(
+          "A recorrência não pode reduzir a fatura abaixo do valor pago.",
+          {
+            category: "conflict",
+            code: "RECURRENCE_STATEMENT_ALREADY_PAID",
+          },
+        );
+      lockedUpdates.push({ statement, totalCents, paidCents: lockedStatement.paidCents });
+    }
     await this.database.delete(statementCycles).where(
       inArray(
         statementCycles.transactionId,
         rows.map(({ transactionId }) => transactionId),
       ),
     );
-    for (const statement of totals.values()) {
-      const totalCents = statement.totalCents - statement.removedCents;
-      await this.database
-        .update(cardStatements)
-        .set({ totalCents, updatedAt: new Date() })
-        .where(eq(cardStatements.id, statement.statementId));
+    await this.database
+      .update(transactions)
+      .set({
+        deletedAt: new Date(),
+        version: sql`${transactions.version} + 1`,
+        updatedAt: new Date(),
+      })
+      .where(
+        inArray(
+          transactions.id,
+          rows.map(({ transactionId }) => transactionId),
+        ),
+      );
+    for (const { statement, totalCents, paidCents } of lockedUpdates) {
+      const updatedStatement = (
+        await this.database
+          .update(cardStatements)
+          .set({ totalCents, updatedAt: new Date() })
+          .where(eq(cardStatements.id, statement.statementId))
+          .returning({ totalCents: cardStatements.totalCents })
+      )[0];
+      if (!updatedStatement) throw new Error("Recurring statement total was not updated.");
       if (statement.accountId)
         await this.projection.sync({
           statementId: statement.statementPublicId,
@@ -393,8 +456,8 @@ export class RecurringRepository implements IRecurringRepository {
           cardName: statement.cardName,
           currency: statement.currency,
           dueOn: statement.dueOn,
-          totalCents,
-          paidCents: statement.paidCents,
+          totalCents: updatedStatement.totalCents,
+          paidCents,
         });
     }
   }

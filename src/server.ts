@@ -1,6 +1,7 @@
 import { buildApp } from "#/app.js";
-import { serverConfig } from "#/config/server.config.js";
+import { runtimeConfig } from "#/config/runtime.config.js";
 import { closeDatabase } from "#/infrastructure/database/db.provider.js";
+import { toSafeErrorLog } from "#/shared/observability/safe-error-log.js";
 
 const start = async (): Promise<void> => {
   const app = await buildApp();
@@ -15,11 +16,11 @@ const start = async (): Promise<void> => {
   process.once("SIGINT", () => void close("SIGINT"));
   process.once("SIGTERM", () => void close("SIGTERM"));
 
-  await app.listen({ host: serverConfig.host, port: serverConfig.port });
+  await app.listen({ host: runtimeConfig.host, port: runtimeConfig.port });
 };
 
 start().catch(async (error: unknown) => {
-  process.stderr.write(`Failed to start HTTP server: ${String(error)}\n`);
+  process.stderr.write(`Failed to start HTTP server: ${JSON.stringify(toSafeErrorLog(error))}\n`);
   await closeDatabase().catch(() => undefined);
   process.exitCode = 1;
 });

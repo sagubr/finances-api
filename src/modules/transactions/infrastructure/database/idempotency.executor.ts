@@ -3,7 +3,7 @@ import type { RequestContext } from "#/modules/platform/application/request-cont
 import { idempotencyRecords } from "#/modules/platform/infrastructure/database/platform.schema.js";
 import type { IIdempotencyExecutor } from "#/modules/transactions/application/ports/idempotency.executor.js";
 import { ApplicationError } from "#/shared/application/application.error.js";
-import { and, eq, gt, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { createHash } from "node:crypto";
 import type { z } from "zod";
 
@@ -39,10 +39,13 @@ export class IdempotencyExecutor implements IIdempotencyExecutor {
     const lockKey = `${this.context.workspaceId}:${this.context.userId}:${operation}:${key}`;
     await this.database.execute(sql`select pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))`);
 
+    const now = new Date();
     const rows = await this.database
       .select({
+        id: idempotencyRecords.id,
         requestHash: idempotencyRecords.requestHash,
         responseBody: idempotencyRecords.responseBody,
+        expiresAt: idempotencyRecords.expiresAt,
       })
       .from(idempotencyRecords)
       .where(
@@ -51,12 +54,15 @@ export class IdempotencyExecutor implements IIdempotencyExecutor {
           eq(idempotencyRecords.actorId, this.context.userId),
           eq(idempotencyRecords.operation, operation),
           eq(idempotencyRecords.key, key),
-          gt(idempotencyRecords.expiresAt, new Date()),
         ),
       )
       .limit(1);
 
-    const record = rows[0];
+    const persisted = rows[0];
+    if (persisted && persisted.expiresAt <= now)
+      await this.database.delete(idempotencyRecords).where(eq(idempotencyRecords.id, persisted.id));
+
+    const record = persisted?.expiresAt && persisted.expiresAt > now ? persisted : undefined;
     if (record && record.requestHash !== hash)
       throw new ApplicationError("A chave já foi usada com outro conteúdo.", {
         category: "conflict",

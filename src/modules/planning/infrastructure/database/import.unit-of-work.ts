@@ -8,13 +8,16 @@ import { ImportRepository } from "./import.repository.js";
 
 export class ImportUnitOfWork implements IImportUnitOfWork {
   private readonly tenantUnitOfWork: TenantUnitOfWork;
-  constructor(database: Database) {
+  constructor(
+    database: Database,
+    private readonly storageQuotaBytes: number,
+  ) {
     this.tenantUnitOfWork = new TenantUnitOfWork(database);
   }
   run<T>(context: RequestContext, work: (repository: IImportRepository) => Promise<T>): Promise<T> {
     return this.tenantUnitOfWork.run(
       { workspaceId: context.workspaceId, actorId: context.userId },
-      (database) => work(new ImportRepository(database, context, uuidv7)),
+      (database) => work(new ImportRepository(database, context, uuidv7, this.storageQuotaBytes)),
     );
   }
 }

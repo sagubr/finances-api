@@ -1,6 +1,6 @@
 import type { TenantDatabase } from "#/infrastructure/database/tenant-unit-of-work.js";
 import type { RequestContext } from "#/modules/platform/application/request-context.js";
-import { jobRuns } from "#/modules/platform/infrastructure/database/platform.schema.js";
+import { jobRuns, workspaces } from "#/modules/platform/infrastructure/database/platform.schema.js";
 import type { IReportRepository } from "#/modules/reports/application/ports/report.repository.js";
 import {
   exportSchema,
@@ -16,6 +16,7 @@ import {
   categories,
   transactions,
 } from "#/modules/transactions/infrastructure/database/transactions.schema.js";
+import { cardProjectionSources } from "#/modules/transactions/public/transaction-source.js";
 import { and, asc, eq, gt, inArray, isNull, like, sql } from "drizzle-orm";
 
 type AnnualRow = Readonly<{
@@ -53,9 +54,11 @@ export class ReportRepository implements IReportRepository {
       })
       .from(transactions)
       .innerJoin(accounts, eq(accounts.id, transactions.accountId))
+      .innerJoin(workspaces, eq(workspaces.id, accounts.workspaceId))
       .where(
         and(
           eq(transactions.workspaceId, this.context.workspaceId),
+          eq(transactions.currency, workspaces.baseCurrency),
           sql`${accounts.type} <> 'BENEFIT'`,
           isNull(transactions.deletedAt),
           like(transactions.competenceMonth, `${year}-%`),
@@ -106,9 +109,11 @@ export class ReportRepository implements IReportRepository {
       })
       .from(transactions)
       .innerJoin(accounts, eq(accounts.id, transactions.accountId))
+      .innerJoin(workspaces, eq(workspaces.id, accounts.workspaceId))
       .where(
         and(
           eq(transactions.workspaceId, this.context.workspaceId),
+          eq(transactions.currency, workspaces.baseCurrency),
           sql`${accounts.type} <> 'BENEFIT'`,
           isNull(transactions.deletedAt),
           inArray(transactions.competenceMonth, [input.current, input.previous]),
@@ -136,11 +141,19 @@ export class ReportRepository implements IReportRepository {
   }
 
   async cashflow(input: Parameters<IReportRepository["cashflow"]>[0], calculatedAt: string) {
+    const projectionSources = sql.join(
+      cardProjectionSources.map((source) => sql`${source}`),
+      sql`, `,
+    );
     const rows = await this.database
       .select({
         date: transactions.occurredOn,
         incomeCents: sql<bigint>`coalesce(sum(case when ${transactions.type} = 'INCOME' and ${accounts.type} not in ('BROKERAGE', 'BENEFIT') then ${transactions.amountCents} else 0 end), 0)`,
-        expenseCents: sql<bigint>`coalesce(sum(case when ${transactions.type} = 'EXPENSE' and ${accounts.type} not in ('BROKERAGE', 'BENEFIT') then ${transactions.amountCents} else 0 end), 0)`,
+        expenseCents: sql<bigint>`coalesce(sum(case
+          when ${transactions.type} = 'EXPENSE' and ${accounts.type} not in ('BROKERAGE', 'BENEFIT') then ${transactions.amountCents}
+          when ${transactions.type} = 'CARD_PAYMENT' and ${transactions.sourceModule} in (${projectionSources}) and ${accounts.type} not in ('BROKERAGE', 'BENEFIT') then ${transactions.amountCents}
+          else 0
+        end), 0)`,
         investmentCents: sql<bigint>`coalesce(sum(case
           when ${transactions.type} = 'TRANSFER' and exists (
             select 1
@@ -157,9 +170,11 @@ export class ReportRepository implements IReportRepository {
       })
       .from(transactions)
       .innerJoin(accounts, eq(accounts.id, transactions.accountId))
+      .innerJoin(workspaces, eq(workspaces.id, accounts.workspaceId))
       .where(
         and(
           eq(transactions.workspaceId, this.context.workspaceId),
+          eq(transactions.currency, workspaces.baseCurrency),
           eq(transactions.status, "PLANNED"),
           isNull(transactions.deletedAt),
           sql`${transactions.occurredOn} between ${input.from} and ${input.to}`,
@@ -211,10 +226,13 @@ export class ReportRepository implements IReportRepository {
         plannedCents: sql<bigint>`coalesce(sum(case when ${transactions.status} = 'PLANNED' then ${transactions.amountCents} else 0 end), 0)`,
       })
       .from(transactions)
+      .innerJoin(accounts, eq(accounts.id, transactions.accountId))
+      .innerJoin(workspaces, eq(workspaces.id, accounts.workspaceId))
       .innerJoin(categories, eq(categories.id, transactions.categoryId))
       .where(
         and(
           eq(transactions.workspaceId, this.context.workspaceId),
+          eq(transactions.currency, workspaces.baseCurrency),
           // In PAYMENT_ONLY mode a card purchase is stored as CARD_PAYMENT so it
           // does not affect the accounting result before the statement is paid.
           // It still represents consumption and must remain visible by category.

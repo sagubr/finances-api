@@ -6,6 +6,7 @@ const decodeBase64 = (value: string | undefined): string | undefined =>
 
 export type DatabaseConfig = Readonly<{
   isDatabaseConfigured: boolean;
+  sslMode: Environment["DB_SSL_MODE"];
   poolConfig: Readonly<PoolConfig>;
 }>;
 
@@ -45,6 +46,7 @@ export const createDatabaseConfig = (environment: Environment): DatabaseConfig =
 
   return Object.freeze({
     isDatabaseConfigured,
+    sslMode: environment.DB_SSL_MODE,
     poolConfig: Object.freeze({
       host: environment.DATABASE_HOST,
       port: environment.DATABASE_PORT,

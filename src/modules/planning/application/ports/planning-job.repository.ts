@@ -29,6 +29,8 @@ export type BudgetConsumption = Readonly<{
   realizedCents: bigint;
 }>;
 
+export type ExpiredImportFile = Readonly<{ id: bigint; storageKey: string }>;
+
 export interface IPlanningJobRepository {
   listActiveRuleIds(referenceOn: string): Promise<readonly string[]>;
   findRule(publicId: string): Promise<ScheduledRecurringRule | null>;
@@ -47,6 +49,8 @@ export interface IPlanningJobRepository {
     thresholdBps: number,
     budgetVersion: number,
   ): Promise<boolean>;
+  listExpiredImportFiles(before: Date, limit: number): Promise<readonly ExpiredImportFile[]>;
+  markImportFileRemoved(id: bigint): Promise<void>;
   writeEvent(
     input: Readonly<{
       eventId: string;

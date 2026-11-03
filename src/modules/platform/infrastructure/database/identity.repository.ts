@@ -15,7 +15,7 @@ import {
   workspaceMembers,
   workspaces,
 } from "#/modules/platform/infrastructure/database/platform.schema.js";
-import { and, desc, eq, gt, inArray, isNull, or, sql } from "drizzle-orm";
+import { and, desc, eq, gt, inArray, isNull, sql } from "drizzle-orm";
 
 export class IdentityRepository implements IIdentityRepository {
   constructor(private readonly database: Database) {}
@@ -29,6 +29,7 @@ export class IdentityRepository implements IIdentityRepository {
             publicId: input.userPublicId,
             email: input.email,
             displayName: input.displayName,
+            emailConfirmedAt: input.emailConfirmedAt,
           })
           .returning({ id: users.id });
         const userId = createdUsers[0]?.id;
@@ -54,16 +55,16 @@ export class IdentityRepository implements IIdentityRepository {
           userId,
           role: "OWNER",
         });
-        await transaction.insert(emailTokens).values({
-          publicId: input.emailToken.publicId,
-          userId,
-          purpose: input.emailToken.purpose,
-          tokenHash: input.emailToken.tokenHash,
-          tokenCiphertext: input.emailToken.tokenCiphertext,
-          expiresAt: input.emailToken.expiresAt,
-        });
-        await transaction.insert(outboxEvents).values([
-          {
+        if (input.emailToken) {
+          await transaction.insert(emailTokens).values({
+            publicId: input.emailToken.publicId,
+            userId,
+            purpose: input.emailToken.purpose,
+            tokenHash: input.emailToken.tokenHash,
+            tokenCiphertext: input.emailToken.tokenCiphertext,
+            expiresAt: input.emailToken.expiresAt,
+          });
+          await transaction.insert(outboxEvents).values({
             eventId: input.emailToken.eventId,
             eventName: "IdentityEmailRequested",
             eventVersion: 1,
@@ -76,7 +77,9 @@ export class IdentityRepository implements IIdentityRepository {
               tokenId: input.emailToken.publicId,
             },
             occurredAt: new Date(),
-          },
+          });
+        }
+        await transaction.insert(outboxEvents).values([
           {
             eventId: input.userRegisteredEventId,
             workspaceId,
@@ -102,7 +105,11 @@ export class IdentityRepository implements IIdentityRepository {
             occurredAt: new Date(),
           },
         ]);
-        return { userId: input.userPublicId, workspaceId: input.workspacePublicId };
+        return {
+          userId: input.userPublicId,
+          workspaceId: input.workspacePublicId,
+          emailConfirmationRequired: Boolean(input.emailToken),
+        };
       });
     } catch (error: unknown) {
       if (typeof error === "object" && error !== null && "code" in error && error.code === "23505")
@@ -113,19 +120,30 @@ export class IdentityRepository implements IIdentityRepository {
 
   async findCredentialByEmail(email: string) {
     const rows = await this.database
-      .select({ userId: users.id, passwordHash: userCredentials.passwordHash })
+      .select({
+        userId: users.id,
+        passwordHash: userCredentials.passwordHash,
+        emailConfirmedAt: users.emailConfirmedAt,
+      })
       .from(users)
       .innerJoin(userCredentials, eq(userCredentials.userId, users.id))
       .where(and(sql`lower(${users.email}) = ${email}`, isNull(users.disabledAt)))
       .limit(1);
-    return rows[0] ?? null;
+    const credential = rows[0];
+    return credential
+      ? {
+          userId: credential.userId,
+          passwordHash: credential.passwordHash,
+          isEmailConfirmed: credential.emailConfirmedAt !== null,
+        }
+      : null;
   }
 
   async recordLoginAttempt(emailHash: string, ipHash: string, succeeded: boolean): Promise<void> {
     await this.database.insert(loginAttempts).values({ emailHash, ipHash, succeeded });
   }
 
-  async countRecentFailedLoginAttempts(emailHash: string, ipHash: string, since: Date) {
+  async countRecentFailedLoginAttemptsByIp(ipHash: string, since: Date) {
     const rows = await this.database
       .select({ total: sql<number>`count(*)::int` })
       .from(loginAttempts)
@@ -133,7 +151,7 @@ export class IdentityRepository implements IIdentityRepository {
         and(
           eq(loginAttempts.succeeded, false),
           gt(loginAttempts.attemptedAt, since),
-          or(eq(loginAttempts.emailHash, emailHash), eq(loginAttempts.ipHash, ipHash)),
+          eq(loginAttempts.ipHash, ipHash),
         ),
       );
     return rows[0]?.total ?? 0;

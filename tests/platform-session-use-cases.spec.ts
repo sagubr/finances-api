@@ -9,7 +9,7 @@ const createRepository = () => {
   const repository: IIdentityRepository = {
     registerUser,
     findCredentialByEmail: vi.fn(),
-    countRecentFailedLoginAttempts: vi.fn(),
+    countRecentFailedLoginAttemptsByIp: vi.fn(),
     recordLoginAttempt: vi.fn(),
     createSession: vi.fn(),
     confirmEmail: vi.fn(),
@@ -52,6 +52,7 @@ describe("platform session use cases", () => {
     registerUser.mockResolvedValue({
       userId: crypto.randomUUID(),
       workspaceId: crypto.randomUUID(),
+      emailConfirmationRequired: true,
     });
     const identifiers = Array.from({ length: 10 }, () => crypto.randomUUID());
     const useCase = new RegisterUserUseCase(
@@ -76,5 +77,38 @@ describe("platform session use cases", () => {
         workspaceName: "Minhas finanças",
       }),
     );
+  });
+
+  it("confirms a newly registered account when development auto-confirmation is enabled", async () => {
+    const { repository, registerUser } = createRepository();
+    registerUser.mockResolvedValue({
+      userId: crypto.randomUUID(),
+      workspaceId: crypto.randomUUID(),
+      emailConfirmationRequired: false,
+    });
+    const identifiers = Array.from({ length: 10 }, () => crypto.randomUUID());
+    const useCase = new RegisterUserUseCase(
+      repository,
+      () => Promise.resolve("password-hash"),
+      () => "opaque-token",
+      () => identifiers.shift() ?? crypto.randomUUID(),
+      (value) => `hash:${value}`,
+      (value) => `encrypted:${value}`,
+      () => new Date("2026-11-03T12:00:00.000Z"),
+      true,
+    );
+
+    await useCase.execute({
+      email: "owner@example.com",
+      displayName: "Gustavo",
+      password: "a-secure-password",
+    });
+
+    expect(registerUser).toHaveBeenCalledWith(
+      expect.objectContaining({
+        emailConfirmedAt: new Date("2026-11-03T12:00:00.000Z"),
+      }),
+    );
+    expect(registerUser.mock.calls[0]?.[0]).not.toHaveProperty("emailToken");
   });
 });

@@ -21,16 +21,13 @@ import {
 import { createHash } from "node:crypto";
 import { v7 as uuidv7 } from "uuid";
 
-const unitOfWork = new ImportUnitOfWork(db);
+const unitOfWork = new ImportUnitOfWork(db, storageConfig.importStorageQuotaBytes);
 const parser = new ImportFileParser();
+const storage = new ImportStorage(storageConfig.importStorageDir);
 export const importControllers = {
   create: new CreateImportPreviewController(
-    new CreateImportPreviewUseCase(
-      unitOfWork,
-      parser,
-      new ImportStorage(storageConfig.importStorageDir),
-      uuidv7,
-      (buffer) => createHash("sha256").update(buffer).digest("hex"),
+    new CreateImportPreviewUseCase(unitOfWork, parser, storage, uuidv7, (buffer) =>
+      createHash("sha256").update(buffer).digest("hex"),
     ),
   ),
   get: new GetImportBatchController(new GetImportBatchUseCase(unitOfWork)),

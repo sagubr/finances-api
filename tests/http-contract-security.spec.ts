@@ -1,4 +1,7 @@
+import { buildApp } from "#/app.js";
 import { createFastifyApplication } from "#/bootstrap/fastify.factory.js";
+import { registerSecurity } from "#/bootstrap/security.bootstrap.js";
+import { readRuntimeConfig } from "#/config/runtime.config.js";
 import {
   civilDateSchema,
   competenceMonthSchema,
@@ -9,6 +12,53 @@ import {
 import { describe, expect, it } from "vitest";
 
 describe("HTTP contract security primitives", () => {
+  it("keeps production CSRF cookies strict and CORS credentials allowlisted", async () => {
+    const app = await buildApp({
+      config: readRuntimeConfig({
+        NODE_ENV: "production",
+        LOG_LEVEL: "silent",
+        COOKIE_SECRET: "cookie-secret-that-is-at-least-32-characters",
+        TOKEN_ENCRYPTION_KEY: "token-secret-that-is-at-least-32-characters",
+        CORS_ALLOWED_ORIGINS: "https://app.example.com",
+        DATABASE_HOST: "db.example.com",
+        DATABASE_USER: "finances_app",
+        DATABASE_PASSWORD: "production-database-password",
+        DB_SSL_MODE: "verify-full",
+        DB_SSL_CA_BASE64: Buffer.from("certificate-authority").toString("base64"),
+        DB_SSL_SERVER_NAME: "db.example.com",
+      }),
+    });
+    const allowed = await app.inject({
+      method: "GET",
+      url: "/api/v1/auth/csrf",
+      headers: { origin: "https://app.example.com" },
+    });
+    const denied = await app.inject({
+      method: "GET",
+      url: "/api/v1/auth/csrf",
+      headers: { origin: "https://evil.example.net" },
+    });
+
+    expect(allowed.headers["access-control-allow-origin"]).toBe("https://app.example.com");
+    expect(allowed.headers["access-control-allow-credentials"]).toBe("true");
+    expect(allowed.cookies[0]).toMatchObject({ httpOnly: true, secure: true, sameSite: "Strict" });
+    expect(denied.headers["access-control-allow-origin"]).toBeUndefined();
+    await app.close();
+  });
+
+  it("sets restrictive production resource and content policies", async () => {
+    const app = createFastifyApplication({ logLevel: "silent", trustProxy: false });
+    await registerSecurity(app, { environment: "production" });
+    app.get("/headers", () => ({ ok: true }));
+
+    const response = await app.inject({ method: "GET", url: "/headers" });
+
+    expect(response.headers["cross-origin-resource-policy"]).toBe("same-site");
+    expect(response.headers["content-security-policy"]).toContain("default-src 'none'");
+    expect(response.headers["content-security-policy"]).toContain("frame-ancestors 'none'");
+    await app.close();
+  });
+
   it("accepts only public UUIDv7 identifiers", () => {
     expect(publicIdSchema.safeParse("019a3ee6-9a44-7c08-a0ee-bf2281547480").success).toBe(true);
     expect(publicIdSchema.safeParse("019a3ee6-9a44-4c08-a0ee-bf2281547480").success).toBe(false);

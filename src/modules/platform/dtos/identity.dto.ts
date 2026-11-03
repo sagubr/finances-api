@@ -17,7 +17,11 @@ export const registerSchema = z.object({
 });
 export const registerResponseSchema = z.object({
   success: z.literal(true),
-  data: z.object({ userId: publicIdSchema, workspaceId: publicIdSchema }),
+  data: z.object({
+    userId: publicIdSchema,
+    workspaceId: publicIdSchema,
+    emailConfirmationRequired: z.boolean(),
+  }),
   message: z.string().optional(),
 });
 export type RegisterInput = z.infer<typeof registerSchema>;

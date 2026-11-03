@@ -22,12 +22,31 @@ export class ImportRepository implements IImportRepository {
     private readonly database: TenantDatabase,
     private readonly context: RequestContext,
     private readonly generateId: () => string,
+    private readonly storageQuotaBytes: number,
   ) {}
 
   async createPreview(
     metadata: Parameters<IImportRepository["createPreview"]>[0],
     rows: Parameters<IImportRepository["createPreview"]>[1],
   ) {
+    await this.database.execute(
+      sql`select pg_advisory_xact_lock(hashtextextended(${`import-storage:${this.context.workspaceId.toString()}`}, 0))`,
+    );
+    const usageRows = await this.database
+      .select({ bytes: sql<string>`coalesce(sum(${importBatches.fileSize}), 0)::text` })
+      .from(importBatches)
+      .where(
+        and(
+          eq(importBatches.workspaceId, this.context.workspaceId),
+          sql`${importBatches.storageKey} <> ''`,
+        ),
+      );
+    const currentUsage = BigInt(usageRows[0]?.bytes ?? "0");
+    if (currentUsage + BigInt(metadata.fileSize) > BigInt(this.storageQuotaBytes))
+      throw new ApplicationError("A quota de armazenamento para importações foi atingida.", {
+        category: "rate-limit",
+        code: "IMPORT_STORAGE_QUOTA_EXCEEDED",
+      });
     const inserted = await this.database
       .insert(importBatches)
       .values({
@@ -205,7 +224,7 @@ export class ImportRepository implements IImportRepository {
     for (const selected of selectedRows) {
       const value = committableImportRowSchema.parse(selected.normalized);
       const accountRows = await this.database
-        .select({ id: accounts.id })
+        .select({ id: accounts.id, currency: accounts.currency })
         .from(accounts)
         .where(
           and(
@@ -232,7 +251,7 @@ export class ImportRepository implements IImportRepository {
         : [];
       const account = accountRows[0];
       const category = categoryRows[0];
-      if (!account || (value.categoryId && !category))
+      if (!account || account.currency !== currency || (value.categoryId && !category))
         throw new ApplicationError("Uma linha possui conta ou categoria inválida.", {
           category: "validation",
           code: "IMPORT_RELATION_INVALID",

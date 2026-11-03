@@ -1,5 +1,6 @@
-import { databaseConfig } from "#/config/database.config.js";
+import { runtimeConfig } from "#/config/runtime.config.js";
 import { closeDatabase } from "#/infrastructure/database/db.provider.js";
+import { toSafeErrorLog } from "#/shared/observability/safe-error-log.js";
 import pino from "pino";
 import { wait } from "./runtime.js";
 import { workerServices } from "./worker.factory.js";
@@ -7,7 +8,7 @@ import { workerServices } from "./worker.factory.js";
 const logger = pino({ name: "finances-worker" });
 
 const start = async (): Promise<void> => {
-  if (!databaseConfig.isDatabaseConfigured)
+  if (!runtimeConfig.isDatabaseConfigured)
     throw new Error("Database credentials are required to run the worker.");
   const controller = new AbortController();
   process.once("SIGINT", () => controller.abort());
@@ -26,7 +27,7 @@ const start = async (): Promise<void> => {
         const processed = await workerServices.processNextJob.execute();
         if (!processed) await wait(2_000, controller.signal);
       } catch (error: unknown) {
-        logger.error({ err: error }, "Worker iteration failed");
+        logger.error({ error: toSafeErrorLog(error) }, "Worker iteration failed");
         await wait(5_000, controller.signal);
       }
     }
@@ -38,7 +39,7 @@ const start = async (): Promise<void> => {
 };
 
 start().catch(async (error: unknown) => {
-  logger.error({ err: error }, "Worker failed");
+  logger.error({ error: toSafeErrorLog(error) }, "Worker failed");
   await closeDatabase().catch(() => undefined);
   process.exitCode = 1;
 });

@@ -1,3 +1,4 @@
+import type { IImportStorage } from "#/modules/planning/application/ports/import-storage.js";
 import type {
   IJobRepository,
   JobRecord,
@@ -9,6 +10,7 @@ import type {
   IWorkerUnitOfWork,
   WorkerScope,
 } from "#/worker/application/ports/worker.unit-of-work.js";
+import { CleanExpiredImportFilesUseCase } from "#/worker/application/use-cases/clean-expired-import-files.use-case.js";
 import { ProcessNextJobUseCase } from "#/worker/application/use-cases/process-next-job.use-case.js";
 import { ScheduleMaintenanceUseCase } from "#/worker/application/use-cases/schedule-maintenance.use-case.js";
 import { describe, expect, it, vi } from "vitest";
@@ -84,6 +86,36 @@ describe("worker use cases", () => {
     await useCase.execute();
 
     expect(schedule).toHaveBeenCalledOnce();
-    expect(schedule.mock.calls[0]?.[0]).toHaveLength(3);
+    expect(schedule.mock.calls[0]?.[0]).toHaveLength(4);
+    expect(schedule.mock.calls[0]?.[0]).toEqual(
+      expect.arrayContaining([expect.objectContaining({ name: "clean-expired-import-files" })]),
+    );
+  });
+
+  it("removes expired import files and marks their storage keys as collected", async () => {
+    const remove = vi.fn<IImportStorage["remove"]>(() => Promise.resolve());
+    const markImportFileRemoved = vi.fn<(id: bigint) => Promise<void>>(() => Promise.resolve());
+    const unitOfWork: IWorkerUnitOfWork = {
+      run: <T>(_workspaceId: bigint, work: (scope: WorkerScope) => Promise<T>) =>
+        work({
+          planning: {
+            listExpiredImportFiles: () =>
+              Promise.resolve([{ id: 9n, storageKey: "workspace/import-file" }]),
+            markImportFileRemoved,
+          } as unknown as WorkerScope["planning"],
+          scheduledJobs: { schedule: vi.fn() },
+        }),
+    };
+    const storage: IImportStorage = { write: vi.fn(), remove };
+    const useCase = new CleanExpiredImportFilesUseCase(
+      unitOfWork,
+      storage,
+      () => new Date("2026-11-02T15:00:00.000Z"),
+    );
+
+    await useCase.execute({ ...job, name: "clean-expired-import-files" });
+
+    expect(remove).toHaveBeenCalledWith("workspace/import-file");
+    expect(markImportFileRemoved).toHaveBeenCalledWith(9n);
   });
 });
