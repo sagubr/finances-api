@@ -14,6 +14,7 @@ import {
   statementListResponseSchema,
   statementPaymentInputSchema,
   statementPaymentResponseSchema,
+  statementReopenResponseSchema,
   statementResponseSchema,
   versionInputSchema,
   type CardInput,
@@ -222,6 +223,21 @@ export const cardRoutes: FastifyPluginAsyncZod<CardRoutesOptions> = (app, option
       },
     },
     (request) => cardControllers.closeStatement.handle(request),
+  );
+  app.post<{ Params: ResourceIdParams; Body: VersionInput; Headers: WorkspaceMutationHeaders }>(
+    "/statements/:id/reopen",
+    {
+      onRequest: csrf,
+      schema: {
+        operationId: "reopenCardStatement",
+        tags: ["Credit Cards"],
+        headers: workspaceMutationHeadersSchema,
+        params: resourceIdParamsSchema,
+        body: versionInputSchema,
+        response: { 200: statementReopenResponseSchema, ...errors },
+      },
+    },
+    (request) => cardControllers.reopenStatement.handle(request),
   );
   app.post<{
     Params: ResourceIdParams;

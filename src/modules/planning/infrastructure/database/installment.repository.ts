@@ -1,6 +1,5 @@
 import type { TenantDatabase } from "#/infrastructure/database/tenant-unit-of-work.js";
 import type { IInstallmentRepository } from "#/modules/planning/application/ports/installment.repository.js";
-import { resolveCardCycle } from "#/modules/planning/domain/card-cycle.js";
 import { splitInstallments } from "#/modules/planning/domain/installments.js";
 import { addCalendarMonths } from "#/modules/planning/domain/recurrence.js";
 import {
@@ -23,6 +22,7 @@ import { ApplicationError } from "#/shared/application/application.error.js";
 import { createCursorPage, decodeCursor } from "#/shared/pagination/cursor-pagination.js";
 import { and, asc, desc, eq, inArray, isNull, lt, sql } from "drizzle-orm";
 import { CardStatementProjectionWriter } from "./card-statement-projection.writer.js";
+import { materializeOpenCardStatement } from "./open-card-statement.js";
 
 const safeMoney = (value: bigint): number => {
   const amount = Number(value);
@@ -37,7 +37,7 @@ export class InstallmentRepository implements IInstallmentRepository {
   constructor(
     private readonly database: TenantDatabase,
     private readonly context: RequestContext,
-    generateId: () => string,
+    private readonly generateId: () => string,
   ) {
     this.projection = new CardStatementProjectionWriter(database, context, generateId);
   }
@@ -216,40 +216,19 @@ export class InstallmentRepository implements IInstallmentRepository {
         const statementPublicId = statementIds[index];
         if (!transaction) throw new Error("Card installment transaction was not returned.");
         if (!statementPublicId) throw new Error("Card installment statement id is missing.");
-        const cycle = resolveCardCycle(item.dueOn, creditCard.closingDay, creditCard.dueDay);
-        const materializedStatement = (
-          await this.database
-            .insert(cardStatements)
-            .values({
-              publicId: statementPublicId,
-              workspaceId: this.context.workspaceId,
-              cardId: creditCard.id,
-              cycleStartOn: cycle.startsOn,
-              cycleEndOn: cycle.endsOn,
-              dueOn: cycle.dueOn,
-              accountingMode: creditCard.accountingMode,
-            })
-            .onConflictDoUpdate({
-              target: [cardStatements.cardId, cardStatements.cycleStartOn],
-              set: { updatedAt: sql`${cardStatements.updatedAt}` },
-            })
-            .returning()
-        )[0];
-        if (!materializedStatement) throw new Error("Card statement was not materialized.");
-        const statement = (
-          await this.database
-            .select()
-            .from(cardStatements)
-            .where(eq(cardStatements.id, materializedStatement.id))
-            .limit(1)
-            .for("update")
-        )[0];
-        if (!statement) throw new Error("Card installment statement lock target was not found.");
-        if (statement.status !== "OPEN")
-          throw new ApplicationError("Uma das faturas do parcelamento já está fechada.", {
-            category: "conflict",
-            code: "INSTALLMENT_STATEMENT_IMMUTABLE",
-          });
+        let firstStatementId = true;
+        const statement = await materializeOpenCardStatement(this.database, {
+          workspaceId: this.context.workspaceId,
+          card: creditCard,
+          occurredOn: item.dueOn,
+          generateId: () => {
+            if (firstStatementId) {
+              firstStatementId = false;
+              return statementPublicId;
+            }
+            return this.generateId();
+          },
+        });
         await this.database.insert(statementCycles).values({
           workspaceId: this.context.workspaceId,
           statementId: statement.id,

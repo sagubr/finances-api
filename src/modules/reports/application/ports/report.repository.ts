@@ -7,6 +7,7 @@ import type {
   ComparisonReport,
   ExportInput,
   ExportView,
+  MonthlyCalendar,
 } from "#/modules/reports/dtos/report.dto.js";
 
 export interface IReportRepository {
@@ -14,6 +15,7 @@ export interface IReportRepository {
   compare(input: CompareReportQuery, calculatedAt: string): Promise<ComparisonReport>;
   cashflow(input: CashflowRange, calculatedAt: string): Promise<CashflowForecast>;
   categorySpending(month: string, calculatedAt: string): Promise<CategorySpending>;
+  monthlyCalendar(month: string, calculatedAt: string): Promise<MonthlyCalendar>;
   createExport(publicId: string, jobId: string, input: ExportInput): Promise<void>;
   findExport(publicId: string): Promise<ExportView | null>;
   createDownloadToken(exportId: string, tokenHash: string, expiresAt: Date): Promise<boolean>;

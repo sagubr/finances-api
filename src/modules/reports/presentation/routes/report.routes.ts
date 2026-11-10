@@ -13,10 +13,13 @@ import {
   categorySpendingResponseSchema,
   compareReportQuerySchema,
   comparisonReportResponseSchema,
+  monthlyCalendarQuerySchema,
+  monthlyCalendarResponseSchema,
   type AnnualReportQuery,
   type CashflowRange,
   type CategorySpendingQuery,
   type CompareReportQuery,
+  type MonthlyCalendarQuery,
 } from "#/modules/reports/dtos/report.dto.js";
 import { reportControllers } from "#/modules/reports/factories/report.factory.js";
 import { apiErrorResponseSchema } from "#/shared/http/error.dto.js";
@@ -84,6 +87,19 @@ export const reportRoutes: FastifyPluginAsyncZod<ReportRoutesOptions> = (app, op
       },
     },
     (request) => reportControllers.categorySpending.handle(request),
+  );
+  app.get<{ Querystring: MonthlyCalendarQuery; Headers: WorkspaceHeaders }>(
+    "/reports/monthly-calendar",
+    {
+      schema: {
+        operationId: "getMonthlyCalendar",
+        tags: ["Reports"],
+        headers: workspaceHeadersSchema,
+        querystring: monthlyCalendarQuerySchema,
+        response: { 200: monthlyCalendarResponseSchema, ...errors },
+      },
+    },
+    (request) => reportControllers.monthlyCalendar.handle(request),
   );
   return Promise.resolve();
 };

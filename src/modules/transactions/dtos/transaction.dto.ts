@@ -24,6 +24,22 @@ export const transactionTypeSchema = z.enum([
   "CARD_PAYMENT",
   "INVESTMENT",
 ]);
+export const transactionLocationSchema = z
+  .object({
+    latitude: z.number().finite().min(-90).max(90),
+    longitude: z.number().finite().min(-180).max(180),
+    accuracyMeters: z.number().finite().positive().nullable(),
+    capturedAt: z.string().datetime({ offset: true }),
+    source: z.enum(["DEVICE", "MAP_PIN"]),
+  })
+  .superRefine((location, context) => {
+    if (location.source === "MAP_PIN" && location.accuracyMeters !== null)
+      context.addIssue({
+        code: "custom",
+        path: ["accuracyMeters"],
+        message: "Map pin locations cannot declare device accuracy.",
+      });
+  });
 
 const currencySchema = z
   .string()
@@ -89,16 +105,26 @@ export const categoryListResponseSchema = z.object({
 });
 export const resourceListQuerySchema = cursorPaginationQuerySchema;
 
-export const transactionInputSchema = z.object({
-  accountId: uuidSchema,
-  categoryId: uuidSchema.optional(),
-  type: z.enum(["INCOME", "EXPENSE"]),
-  status: transactionStatusSchema,
-  amountCents: positiveMoneySchema,
-  currency: currencySchema,
-  description: z.string().trim().min(1).max(500),
-  occurredOn: civilDateSchema,
-});
+export const transactionInputSchema = z
+  .object({
+    accountId: uuidSchema,
+    categoryId: uuidSchema.optional(),
+    type: z.enum(["INCOME", "EXPENSE"]),
+    status: transactionStatusSchema,
+    amountCents: positiveMoneySchema,
+    currency: currencySchema,
+    description: z.string().trim().min(1).max(500),
+    occurredOn: civilDateSchema,
+    location: transactionLocationSchema.optional(),
+  })
+  .superRefine((transaction, context) => {
+    if (transaction.location && transaction.type !== "EXPENSE")
+      context.addIssue({
+        code: "custom",
+        path: ["location"],
+        message: "Location is only supported for expense transactions.",
+      });
+  });
 
 export const transactionPatchSchema = z.object({
   expectedVersion: z.number().int().positive(),
@@ -107,6 +133,7 @@ export const transactionPatchSchema = z.object({
   amountCents: positiveMoneySchema.optional(),
   description: z.string().trim().min(1).max(500).optional(),
   occurredOn: civilDateSchema.optional(),
+  location: transactionLocationSchema.nullable().optional(),
 });
 
 export const versionInputSchema = z.object({ expectedVersion: z.number().int().positive() });
@@ -131,6 +158,7 @@ const transactionCursorSchema = cursorSchema.refine((cursor) => {
 }, "Invalid transaction cursor.");
 export const listTransactionsQuerySchema = z.object({
   month: competenceMonthSchema,
+  date: civilDateSchema.optional(),
   accountId: uuidSchema.optional(),
   categoryId: uuidSchema.optional(),
   type: transactionTypeSchema.optional(),
@@ -138,6 +166,12 @@ export const listTransactionsQuerySchema = z.object({
   search: z.string().trim().max(100).optional(),
   limit: z.coerce.number().int().min(1).max(200).default(50),
   cursor: transactionCursorSchema.optional(),
+});
+
+export const transactionMapQuerySchema = z.object({
+  month: competenceMonthSchema,
+  accountId: uuidSchema.optional(),
+  categoryId: uuidSchema.optional(),
 });
 
 export const transactionSchema = z.object({
@@ -153,7 +187,9 @@ export const transactionSchema = z.object({
   competenceMonth: competenceMonthSchema,
   settledOn: civilDateSchema.nullable(),
   sourceModule: z.string().max(40).nullable(),
-  sourcePublicId: uuidSchema.nullable(),
+  // Correlation IDs predate the UUIDv7 public-ID policy and may contain legacy UUIDs.
+  sourcePublicId: z.string().uuid().nullable(),
+  location: transactionLocationSchema.nullable().default(null),
   version: z.number().int().positive(),
   deletedAt: z.string().datetime().nullable(),
 });
@@ -167,6 +203,44 @@ export const transactionListResponseSchema = z.object({
     items: z.array(transactionSchema),
     pageInfo: z.object({ nextCursor: z.string().nullable(), hasNextPage: z.boolean() }),
   }),
+});
+const transactionMapFeaturePropertiesSchema = z.object({
+  transactionId: uuidSchema,
+  accountId: uuidSchema,
+  accountName: z.string(),
+  categoryId: uuidSchema.nullable(),
+  categoryName: z.string().nullable(),
+  categoryColor: z.string().nullable(),
+  description: z.string(),
+  amountCents: z.number().int().positive(),
+  currency: z.string().length(3),
+  occurredOn: civilDateSchema,
+  status: transactionStatusSchema,
+  sourceModule: z.string().nullable(),
+});
+export const transactionMapSchema = z.object({
+  type: z.literal("FeatureCollection"),
+  features: z.array(
+    z.object({
+      type: z.literal("Feature"),
+      id: uuidSchema,
+      geometry: z.object({
+        type: z.literal("Point"),
+        coordinates: z.tuple([z.number(), z.number()]),
+      }),
+      properties: transactionMapFeaturePropertiesSchema,
+    }),
+  ),
+  summary: z.object({
+    transactionCount: z.number().int().nonnegative(),
+    locatedCount: z.number().int().nonnegative(),
+    unlocatedCount: z.number().int().nonnegative(),
+    locatedAmountCents: z.number().int().nonnegative(),
+  }),
+});
+export const transactionMapResponseSchema = z.object({
+  success: z.literal(true),
+  data: transactionMapSchema,
 });
 export const transferSchema = z.object({
   id: uuidSchema,
@@ -202,6 +276,8 @@ export type TransactionPatch = z.infer<typeof transactionPatchSchema>;
 export type VersionInput = z.infer<typeof versionInputSchema>;
 export type TransferInput = z.infer<typeof transferInputSchema>;
 export type ListTransactionsQuery = z.infer<typeof listTransactionsQuerySchema>;
+export type TransactionMapQuery = z.infer<typeof transactionMapQuerySchema>;
+export type TransactionMapView = z.infer<typeof transactionMapSchema>;
 export type ResourceListQuery = CursorPaginationQuery;
 export type TransactionView = z.infer<typeof transactionSchema>;
 export type TransferView = z.infer<typeof transferSchema>;

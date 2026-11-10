@@ -4,6 +4,7 @@ import type {
   PlanningWorkContext,
 } from "#/modules/planning/application/ports/planning.unit-of-work.js";
 import { DeleteCardPurchaseUseCase } from "#/modules/planning/application/use-cases/delete-card-purchase.use-case.js";
+import { ReopenCardStatementUseCase } from "#/modules/planning/application/use-cases/reopen-card-statement.use-case.js";
 import { UpdateCardPurchaseUseCase } from "#/modules/planning/application/use-cases/update-card-purchase.use-case.js";
 import type { RequestContext } from "#/modules/platform/application/request-context.js";
 import { describe, expect, it, vi } from "vitest";
@@ -73,5 +74,20 @@ describe("card purchase use cases", () => {
     ).toThrowError(expect.objectContaining({ category: "forbidden", code: "CAPABILITY_DENIED" }));
     expect(run).not.toHaveBeenCalled();
     expect(deletePurchase).not.toHaveBeenCalled();
+  });
+
+  it("reopens an unpaid closed statement through the injected repository", async () => {
+    const reopenStatement = vi.fn(() =>
+      Promise.resolve({ id: statementId, status: "OPEN" as const, totalCents: 12_500, version: 2 }),
+    );
+    const cards = { reopenStatement } as unknown as ICardRepository;
+    const useCase = new ReopenCardStatementUseCase(createUnitOfWork(cards));
+
+    await expect(useCase.execute(context, statementId, 1)).resolves.toMatchObject({
+      id: statementId,
+      status: "OPEN",
+      version: 2,
+    });
+    expect(reopenStatement).toHaveBeenCalledWith(statementId, 1);
   });
 });

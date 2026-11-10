@@ -16,6 +16,7 @@ import type {
 } from "#/modules/reports/application/ports/report.unit-of-work.js";
 import { GetAnnualReportUseCase } from "#/modules/reports/application/use-cases/get-annual-report.use-case.js";
 import { GetCategorySpendingUseCase } from "#/modules/reports/application/use-cases/get-category-spending.use-case.js";
+import { GetMonthlyCalendarUseCase } from "#/modules/reports/application/use-cases/get-monthly-calendar.use-case.js";
 import type { IWealthRepository } from "#/modules/wealth/application/ports/wealth.repository.js";
 import type {
   IWealthUnitOfWork,
@@ -84,6 +85,36 @@ describe("wave use-case boundaries", () => {
     await useCase.execute(context, "2032-04");
 
     expect(categorySpending).toHaveBeenCalledWith("2032-04", "2032-04-05T00:00:00.000Z");
+  });
+
+  it("scopes the monthly calendar to the requested competence and injected clock", async () => {
+    const monthlyCalendar = vi.fn(() =>
+      Promise.resolve({
+        month: "2032-04",
+        items: [],
+        totals: {
+          realizedExpenseCents: 0,
+          plannedExpenseCents: 0,
+          realizedCount: 0,
+          plannedCount: 0,
+        },
+        calculatedAt: "2032-04-05T00:00:00.000Z",
+        dataVersion: 1,
+      }),
+    );
+    const repository = { monthlyCalendar } as unknown as IReportRepository;
+    const unitOfWork: IReportUnitOfWork = {
+      run: <T>(_context: RequestContext, work: (scope: ReportWorkContext) => Promise<T>) =>
+        work({ reports: repository }),
+    };
+    const useCase = new GetMonthlyCalendarUseCase(
+      unitOfWork,
+      () => new Date("2032-04-05T00:00:00.000Z"),
+    );
+
+    await useCase.execute(context, "2032-04");
+
+    expect(monthlyCalendar).toHaveBeenCalledWith("2032-04", "2032-04-05T00:00:00.000Z");
   });
 
   it("rejects overlapping planner slots before opening a transaction", () => {

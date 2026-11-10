@@ -1,6 +1,6 @@
 import { assertNonOverlappingSlots } from "#/modules/operations/domain/planner.js";
 import { reachedBudgetThresholds } from "#/modules/planning/domain/budget-thresholds.js";
-import { resolveCardCycle } from "#/modules/planning/domain/card-cycle.js";
+import { nextCardCycle, resolveCardCycle } from "#/modules/planning/domain/card-cycle.js";
 import { splitInstallments } from "#/modules/planning/domain/installments.js";
 import { addCalendarMonths, nextRecurrenceDate } from "#/modules/planning/domain/recurrence.js";
 import { calculateMonthlySummary } from "#/modules/transactions/domain/monthly-summary.js";
@@ -76,6 +76,16 @@ describe("financial domain rules", () => {
       dueOn: "2026-01-17",
     });
     expect(resolveCardCycle("2026-01-11", 10, 17)).toEqual({
+      startsOn: "2026-01-11",
+      endsOn: "2026-02-10",
+      dueOn: "2026-02-17",
+    });
+  });
+
+  it("advances a closed card cycle without changing its calendar rules", () => {
+    expect(
+      nextCardCycle({ startsOn: "2025-12-11", endsOn: "2026-01-10", dueOn: "2026-01-17" }, 10, 17),
+    ).toEqual({
       startsOn: "2026-01-11",
       endsOn: "2026-02-10",
       dueOn: "2026-02-17",

@@ -1,3 +1,4 @@
+import { transactionLocationSchema } from "#/modules/transactions/dtos/transaction.dto.js";
 import {
   cursorPaginationQuerySchema,
   pageInfoSchema,
@@ -114,8 +115,10 @@ export const cardPurchaseInputSchema = z.object({
   amountCents: positiveMoneySchema,
   description: z.string().trim().min(1).max(500),
   occurredOn: dateSchema,
+  location: transactionLocationSchema.optional(),
 });
 export const cardPurchasePatchSchema = cardPurchaseInputSchema.extend({
+  location: transactionLocationSchema.nullable().optional(),
   expectedVersion: z.number().int().positive(),
 });
 
@@ -255,6 +258,7 @@ export const statementPurchaseSchema = z.object({
   amountCents: z.number().int().positive(),
   currency: z.string().length(3),
   occurredOn: dateSchema,
+  location: transactionLocationSchema.nullable().default(null),
   editable: z.boolean(),
   version: z.number().int().positive(),
 });
@@ -274,11 +278,18 @@ export const cardPurchaseSchema = z.object({
   competenceMonth: monthSchema,
   currency: z.string().length(3),
   status: z.literal("CONFIRMED"),
+  location: transactionLocationSchema.nullable().default(null),
   version: z.number().int().positive(),
 });
 export const statementCloseSchema = z.object({
   id: uuidSchema,
   status: z.literal("CLOSED"),
+  totalCents: z.number().int().nonnegative(),
+  version: z.number().int().positive(),
+});
+export const statementReopenSchema = z.object({
+  id: uuidSchema,
+  status: z.literal("OPEN"),
   totalCents: z.number().int().nonnegative(),
   version: z.number().int().positive(),
 });
@@ -302,6 +313,7 @@ export const statementListResponseSchema = success(
 );
 export const statementResponseSchema = success(statementSchema);
 export const statementCloseResponseSchema = success(statementCloseSchema);
+export const statementReopenResponseSchema = success(statementReopenSchema);
 export const statementPaymentResponseSchema = success(statementPaymentSchema);
 export type CardInput = z.infer<typeof cardInputSchema>;
 export type CardPatch = z.infer<typeof cardPatchSchema>;

@@ -37,13 +37,6 @@ export class ScheduleMaintenanceUseCase {
           {
             publicId: this.generateId(),
             workspaceId: workspace.id,
-            name: "reconcile-budgets",
-            executionKey: `reconcile-budgets:${workspace.id.toString()}:${hourWindow}`,
-            payload: { month },
-          },
-          {
-            publicId: this.generateId(),
-            workspaceId: workspace.id,
             name: "clean-expired-import-files",
             executionKey: `clean-expired-import-files:${workspace.id.toString()}:${referenceOn}`,
             payload: { referenceOn },
@@ -55,6 +48,20 @@ export class ScheduleMaintenanceUseCase {
             executionKey: `generate-occurrences:${ruleId}:${referenceOn}`,
             payload: { ruleId, referenceOn },
           })),
+          {
+            publicId: this.generateId(),
+            workspaceId: workspace.id,
+            name: "settle-overdue-transactions",
+            executionKey: `settle-overdue-transactions:${workspace.id.toString()}:${hourWindow}`,
+            payload: { referenceOn },
+          },
+          {
+            publicId: this.generateId(),
+            workspaceId: workspace.id,
+            name: "reconcile-budgets",
+            executionKey: `reconcile-budgets:${workspace.id.toString()}:${hourWindow}`,
+            payload: { month },
+          },
         ]);
       });
     }

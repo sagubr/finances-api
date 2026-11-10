@@ -11,6 +11,8 @@ import type {
 import type {
   ListTransactionsQuery,
   TransactionInput,
+  TransactionMapQuery,
+  TransactionMapView,
   TransactionPatch,
   TransactionView,
   TransferInput,
@@ -20,6 +22,7 @@ import {
   accounts,
   categories,
   transactionHistory,
+  transactionLocations,
   transactions,
   transferPairs,
 } from "#/modules/transactions/infrastructure/database/transactions.schema.js";
@@ -27,10 +30,12 @@ import { ApplicationError } from "#/shared/application/application.error.js";
 import { and, desc, eq, ilike, inArray, isNull, or, sql } from "drizzle-orm";
 
 type TransactionRow = typeof transactions.$inferSelect;
+type TransactionLocationRow = typeof transactionLocations.$inferSelect;
 type JoinedTransaction = Readonly<{
   transaction: TransactionRow;
   accountPublicId: string;
   categoryPublicId: string | null;
+  location?: TransactionLocationRow | null | undefined;
 }>;
 
 const safeMoney = (value: bigint): number => {
@@ -54,6 +59,15 @@ const mapTransaction = (row: JoinedTransaction): TransactionView => ({
   settledOn: row.transaction.settledOn,
   sourceModule: row.transaction.sourceModule,
   sourcePublicId: row.transaction.sourcePublicId,
+  location: row.location
+    ? {
+        latitude: row.location.latitude,
+        longitude: row.location.longitude,
+        accuracyMeters: row.location.accuracyMeters,
+        capturedAt: row.location.capturedAt.toISOString(),
+        source: row.location.source,
+      }
+    : null,
   version: row.transaction.version,
   deletedAt: row.transaction.deletedAt?.toISOString() ?? null,
 });
@@ -73,6 +87,7 @@ export class TransactionRepository implements ITransactionRepository {
       eq(transactions.workspaceId, this.context.workspaceId),
       isNull(transactions.deletedAt),
       ...(query.month ? [eq(transactions.competenceMonth, query.month)] : []),
+      ...(query.date ? [eq(transactions.occurredOn, query.date)] : []),
       ...(query.accountId ? [eq(accounts.publicId, query.accountId)] : []),
       ...(query.categoryId ? [eq(categories.publicId, query.categoryId)] : []),
       ...(query.type ? [eq(transactions.type, query.type)] : []),
@@ -96,10 +111,12 @@ export class TransactionRepository implements ITransactionRepository {
         transaction: transactions,
         accountPublicId: accounts.publicId,
         categoryPublicId: categories.publicId,
+        location: transactionLocations,
       })
       .from(transactions)
       .innerJoin(accounts, eq(accounts.id, transactions.accountId))
       .leftJoin(categories, eq(categories.id, transactions.categoryId))
+      .leftJoin(transactionLocations, eq(transactionLocations.transactionId, transactions.id))
       .where(and(...conditions))
       .orderBy(desc(transactions.occurredOn), desc(transactions.id))
       .limit(query.limit + 1);
@@ -114,6 +131,75 @@ export class TransactionRepository implements ITransactionRepository {
             ? Buffer.from(`${last.occurredOn}|${last.id.toString()}`).toString("base64url")
             : null,
         hasNextPage,
+      },
+    };
+  }
+
+  async map(query: TransactionMapQuery): Promise<TransactionMapView> {
+    const expenseConditions = [
+      eq(transactions.workspaceId, this.context.workspaceId),
+      isNull(transactions.deletedAt),
+      eq(transactions.competenceMonth, query.month),
+      or(eq(transactions.type, "EXPENSE"), eq(transactions.sourceModule, "CC_PURCHASE")),
+      ...(query.accountId ? [eq(accounts.publicId, query.accountId)] : []),
+      ...(query.categoryId ? [eq(categories.publicId, query.categoryId)] : []),
+    ];
+    const rows = await this.database
+      .select({
+        transaction: transactions,
+        accountPublicId: accounts.publicId,
+        accountName: accounts.name,
+        categoryPublicId: categories.publicId,
+        categoryName: categories.name,
+        categoryColor: categories.color,
+        location: transactionLocations,
+      })
+      .from(transactions)
+      .innerJoin(accounts, eq(accounts.id, transactions.accountId))
+      .leftJoin(categories, eq(categories.id, transactions.categoryId))
+      .innerJoin(transactionLocations, eq(transactionLocations.transactionId, transactions.id))
+      .where(and(...expenseConditions))
+      .orderBy(desc(transactions.occurredOn), desc(transactions.id));
+    const totals = await this.database
+      .select({ count: sql<number>`count(*)::int` })
+      .from(transactions)
+      .innerJoin(accounts, eq(accounts.id, transactions.accountId))
+      .leftJoin(categories, eq(categories.id, transactions.categoryId))
+      .where(and(...expenseConditions));
+    const transactionCount = totals[0]?.count ?? 0;
+    const locatedAmountCents = rows.reduce(
+      (total, { transaction }) => total + safeMoney(transaction.amountCents),
+      0,
+    );
+    return {
+      type: "FeatureCollection",
+      features: rows.map((row) => ({
+        type: "Feature" as const,
+        id: row.transaction.publicId,
+        geometry: {
+          type: "Point" as const,
+          coordinates: [row.location.longitude, row.location.latitude] as [number, number],
+        },
+        properties: {
+          transactionId: row.transaction.publicId,
+          accountId: row.accountPublicId,
+          accountName: row.accountName,
+          categoryId: row.categoryPublicId,
+          categoryName: row.categoryName,
+          categoryColor: row.categoryColor,
+          description: row.transaction.description,
+          amountCents: safeMoney(row.transaction.amountCents),
+          currency: row.transaction.currency,
+          occurredOn: row.transaction.occurredOn,
+          status: row.transaction.status,
+          sourceModule: row.transaction.sourceModule,
+        },
+      })),
+      summary: {
+        transactionCount,
+        locatedCount: rows.length,
+        unlocatedCount: Math.max(0, transactionCount - rows.length),
+        locatedAmountCents,
       },
     };
   }
@@ -146,10 +232,12 @@ export class TransactionRepository implements ITransactionRepository {
       .returning();
     const row = inserted[0];
     if (!row) throw new Error("Transaction insert did not return a row.");
+    const location = input.location ? await this.upsertLocation(row.id, input.location) : null;
     const mapped = mapTransaction({
       transaction: row,
       accountPublicId: input.accountId,
       categoryPublicId: input.categoryId ?? null,
+      location,
     });
     await this.writeHistory(row.id, "CREATED", mapped);
     await this.writeEvent("TransactionCreated", mapped);
@@ -161,6 +249,7 @@ export class TransactionRepository implements ITransactionRepository {
     this.rejectTransfer(current.transaction);
     this.rejectCardManagedTransaction(current.transaction);
     this.requireVersion(current.transaction, input.expectedVersion);
+    this.requireExpenseLocation(current.transaction, input.location);
     const accountId = input.accountId ?? current.accountPublicId;
     const account = await this.requireAccount(accountId, current.transaction.currency);
     const categoryPublicId =
@@ -194,10 +283,17 @@ export class TransactionRepository implements ITransactionRepository {
       )
       .returning();
     const row = updated[0] ?? this.throwVersionConflict(current.transaction.version);
+    const location =
+      input.location === undefined
+        ? current.location
+        : input.location === null
+          ? await this.deleteLocation(row.id)
+          : await this.upsertLocation(row.id, input.location);
     const mapped = mapTransaction({
       transaction: row,
       accountPublicId: accountId,
       categoryPublicId: categoryPublicId ?? null,
+      location,
     });
     await this.writeHistory(row.id, "UPDATED", mapped);
     await this.writeEvent("TransactionUpdated", mapped);
@@ -382,6 +478,7 @@ export class TransactionRepository implements ITransactionRepository {
       settledOn: input.status === "SETTLED" ? input.occurredOn : null,
       sourceModule: "TX",
       sourcePublicId: ids.pair,
+      location: null,
       version: 1,
       deletedAt: null,
     });
@@ -448,10 +545,12 @@ export class TransactionRepository implements ITransactionRepository {
         transaction: transactions,
         accountPublicId: accounts.publicId,
         categoryPublicId: categories.publicId,
+        location: transactionLocations,
       })
       .from(transactions)
       .innerJoin(accounts, eq(accounts.id, transactions.accountId))
       .leftJoin(categories, eq(categories.id, transactions.categoryId))
+      .leftJoin(transactionLocations, eq(transactionLocations.transactionId, transactions.id))
       .where(
         and(
           eq(transactions.workspaceId, this.context.workspaceId),
@@ -613,6 +712,64 @@ export class TransactionRepository implements ITransactionRepository {
     });
   }
 
+  private requireExpenseLocation(
+    row: TransactionRow,
+    location: TransactionPatch["location"],
+  ): void {
+    if (location === undefined || location === null || row.type === "EXPENSE") return;
+    throw new ApplicationError("A localização só pode ser informada para despesas.", {
+      category: "validation",
+      code: "TRANSACTION_LOCATION_TYPE_INVALID",
+    });
+  }
+
+  private async upsertLocation(
+    transactionId: bigint,
+    location: NonNullable<TransactionInput["location"]>,
+  ): Promise<TransactionLocationRow> {
+    const rows = await this.database
+      .insert(transactionLocations)
+      .values({
+        workspaceId: this.context.workspaceId,
+        transactionId,
+        latitude: location.latitude,
+        longitude: location.longitude,
+        accuracyMeters: location.accuracyMeters,
+        capturedAt: new Date(location.capturedAt),
+        source: location.source,
+        createdBy: this.context.userId,
+        updatedBy: this.context.userId,
+      })
+      .onConflictDoUpdate({
+        target: transactionLocations.transactionId,
+        set: {
+          latitude: location.latitude,
+          longitude: location.longitude,
+          accuracyMeters: location.accuracyMeters,
+          capturedAt: new Date(location.capturedAt),
+          source: location.source,
+          updatedBy: this.context.userId,
+          updatedAt: new Date(),
+        },
+      })
+      .returning();
+    const row = rows[0];
+    if (!row) throw new Error("Transaction location upsert did not return a row.");
+    return row;
+  }
+
+  private async deleteLocation(transactionId: bigint): Promise<null> {
+    await this.database
+      .delete(transactionLocations)
+      .where(
+        and(
+          eq(transactionLocations.workspaceId, this.context.workspaceId),
+          eq(transactionLocations.transactionId, transactionId),
+        ),
+      );
+    return null;
+  }
+
   private requireVersion(row: TransactionRow, expectedVersion: number): void {
     if (row.version === expectedVersion) return;
     this.throwVersionConflict(row.version);
@@ -627,7 +784,14 @@ export class TransactionRepository implements ITransactionRepository {
   }
 
   private async writeEvent(eventName: string, payload: unknown): Promise<void> {
-    const event = payload as { id: string; version: number };
+    const event = payload as { id: string; version: number; location?: unknown };
+    const eventPayload =
+      payload && typeof payload === "object" && "location" in payload
+        ? Object.fromEntries([
+            ...Object.entries(payload).filter(([key]) => key !== "location"),
+            ["hasLocation", event.location !== null],
+          ])
+        : payload;
     await this.database.insert(outboxEvents).values({
       eventId: this.generateId(),
       workspaceId: this.context.workspaceId,
@@ -637,7 +801,7 @@ export class TransactionRepository implements ITransactionRepository {
       aggregatePublicId: event.id,
       aggregateVersion: event.version,
       correlationId: this.generateId(),
-      payload,
+      payload: eventPayload,
       occurredAt: new Date(),
     });
   }

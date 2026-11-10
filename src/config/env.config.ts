@@ -43,6 +43,16 @@ const environmentSchema = z.object({
   COOKIE_SECRET: z.string().min(32).optional(),
   TOKEN_ENCRYPTION_KEY: z.string().min(32).optional(),
   AUTH_AUTO_CONFIRM_EMAIL: looseBoolean(false),
+  GOOGLE_OAUTH_CLIENT_ID: z.string().min(1).optional(),
+  GOOGLE_OAUTH_CLIENT_SECRET: z.string().min(1).optional(),
+  GOOGLE_OAUTH_REDIRECT_URI: z
+    .string()
+    .url()
+    .default("http://localhost:3005/api/v1/auth/callback/google"),
+  WEB_APP_URL: z.string().url().default("http://localhost:3000"),
+  RESEND_API_KEY: z.string().min(1).optional(),
+  EMAIL_FROM: z.string().min(3).optional(),
+  EMAIL_REPLY_TO: z.string().email().optional(),
   REDIS_URL: z.string().min(1).optional(),
   IMPORT_STORAGE_DIR: z.string().min(1).default("/tmp/finances-imports"),
   IMPORT_STORAGE_QUOTA_BYTES: looseNumber(100 * 1024 * 1024).pipe(

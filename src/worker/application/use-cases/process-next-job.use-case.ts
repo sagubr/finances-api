@@ -1,4 +1,5 @@
 import type { IJobRepository } from "#/modules/platform/application/ports/job.repository.js";
+import { toSafeErrorLog } from "#/shared/observability/safe-error-log.js";
 import type { IJobHandler } from "#/worker/application/job-handler.js";
 
 export class ProcessNextJobUseCase {
@@ -21,7 +22,8 @@ export class ProcessNextJobUseCase {
       await this.jobs.complete(job.id);
       return true;
     } catch (error: unknown) {
-      await this.jobs.fail(job.id, job.attempts, error instanceof Error ? error.name : "UNKNOWN");
+      const diagnostic = toSafeErrorLog(error);
+      await this.jobs.fail(job.id, job.attempts, diagnostic.code ?? diagnostic.name);
       throw error;
     }
   }

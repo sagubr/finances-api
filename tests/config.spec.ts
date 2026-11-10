@@ -18,6 +18,9 @@ const productionDatabase = {
   DB_SSL_MODE: "verify-full",
   DB_SSL_CA_BASE64: Buffer.from("certificate-authority").toString("base64"),
   DB_SSL_SERVER_NAME: "db.example.com",
+  RESEND_API_KEY: "re_production-key",
+  EMAIL_FROM: "Nummo <no-reply@example.com>",
+  REDIS_URL: "rediss://cache.example.com",
 } as const;
 
 describe("runtime configuration", () => {
@@ -86,6 +89,19 @@ describe("runtime configuration", () => {
     ).toThrow("AUTH_AUTO_CONFIRM_EMAIL");
   });
 
+  it("requires the Resend key and sender to be configured together", () => {
+    expect(() => readRuntimeConfig({ ...validEnvironment, RESEND_API_KEY: "re_test" })).toThrow(
+      "RESEND_API_KEY and EMAIL_FROM",
+    );
+    expect(
+      readRuntimeConfig({
+        ...validEnvironment,
+        RESEND_API_KEY: "re_test",
+        EMAIL_FROM: "Nummo <no-reply@example.com>",
+      }).emailFrom,
+    ).toBe("Nummo <no-reply@example.com>");
+  });
+
   it("requires explicit HTTPS CORS origins in production", () => {
     const production = {
       ...validEnvironment,
@@ -112,6 +128,9 @@ describe("runtime configuration", () => {
       COOKIE_SECRET: "cookie-secret-that-is-at-least-32-characters",
       TOKEN_ENCRYPTION_KEY: "token-secret-that-is-at-least-32-characters",
       CORS_ALLOWED_ORIGINS: "https://app.example.com",
+      RESEND_API_KEY: "re_production-key",
+      EMAIL_FROM: "Nummo <no-reply@example.com>",
+      REDIS_URL: "rediss://cache.example.com",
     } as const;
 
     expect(() =>

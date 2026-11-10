@@ -3,6 +3,7 @@
 export {
   authSchema,
   emailTokens,
+  externalIdentities,
   idempotencyRecords,
   jobRuns,
   jobStatus,
@@ -23,6 +24,8 @@ export {
   categories,
   categoryType,
   transactionHistory,
+  transactionLocationSource,
+  transactionLocations,
   transactionStatus,
   transactionType,
   transactions,

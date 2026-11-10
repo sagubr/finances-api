@@ -25,6 +25,7 @@ const createIdentityRepository = () => {
   const createSession = vi.fn<IIdentityRepository["createSession"]>();
   const repository: IIdentityRepository = {
     registerUser: vi.fn(),
+    authenticateExternalIdentity: vi.fn(),
     findCredentialByEmail,
     countRecentFailedLoginAttemptsByIp,
     recordLoginAttempt,

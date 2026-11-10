@@ -78,9 +78,23 @@ export type CreateSessionInput = Readonly<{
   expiresAt: Date;
   absoluteExpiresAt: Date;
 }>;
+export type AuthenticateExternalIdentityInput = Readonly<{
+  provider: "google";
+  subject: string;
+  email: string;
+  displayName: string;
+  authenticatedAt: Date;
+  userPublicId: string;
+  workspacePublicId: string;
+  workspaceName: string;
+  userRegisteredEventId: string;
+  workspaceCreatedEventId: string;
+  correlationId: string;
+}>;
 
 export interface IIdentityRepository {
   registerUser(input: RegisterUserInput): Promise<RegisteredUser | null>;
+  authenticateExternalIdentity(input: AuthenticateExternalIdentityInput): Promise<bigint | null>;
   findCredentialByEmail(email: string): Promise<Credential | null>;
   countRecentFailedLoginAttemptsByIp(ipHash: string, since: Date): Promise<number>;
   recordLoginAttempt(emailHash: string, ipHash: string, succeeded: boolean): Promise<void>;

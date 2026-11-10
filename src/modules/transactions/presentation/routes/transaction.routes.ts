@@ -15,6 +15,8 @@ import {
   resourceIdParamsSchema,
   transactionInputSchema,
   transactionListResponseSchema,
+  transactionMapQuerySchema,
+  transactionMapResponseSchema,
   transactionPatchSchema,
   transactionResponseSchema,
   transferInputSchema,
@@ -23,6 +25,7 @@ import {
   type ListTransactionsQuery,
   type ResourceIdParams,
   type TransactionInput,
+  type TransactionMapQuery,
   type TransactionPatch,
   type TransferInput,
   type VersionInput,
@@ -61,6 +64,19 @@ export const transactionRoutes: FastifyPluginAsyncZod<TransactionRoutesOptions> 
       },
     },
     (request) => transactionControllers.list.handle(request),
+  );
+  app.get<{ Querystring: TransactionMapQuery; Headers: WorkspaceHeaders }>(
+    "/transactions/map",
+    {
+      schema: {
+        operationId: "getTransactionMap",
+        tags: ["Transactions"],
+        headers: workspaceHeadersSchema,
+        querystring: transactionMapQuerySchema,
+        response: { 200: transactionMapResponseSchema, ...errors },
+      },
+    },
+    (request) => transactionControllers.map.handle(request),
   );
   app.get<{ Params: ResourceIdParams; Headers: WorkspaceHeaders }>(
     "/transactions/:id",

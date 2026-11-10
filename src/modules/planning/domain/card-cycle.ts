@@ -45,3 +45,6 @@ export const resolveCardCycle = (
   const due = parts(dueAnchor);
   return { startsOn, endsOn, dueOn: validDate(due.year, due.month, dueDay) };
 };
+
+export const nextCardCycle = (cycle: CardCycle, closingDay: number, dueDay: number): CardCycle =>
+  resolveCardCycle(addDay(cycle.endsOn), closingDay, dueDay);

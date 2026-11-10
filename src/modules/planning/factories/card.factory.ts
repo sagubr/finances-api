@@ -8,6 +8,7 @@ import { GetCardStatementUseCase } from "#/modules/planning/application/use-case
 import { ListCardStatementsUseCase } from "#/modules/planning/application/use-cases/list-card-statements.use-case.js";
 import { ListCreditCardsUseCase } from "#/modules/planning/application/use-cases/list-credit-cards.use-case.js";
 import { PayCardStatementUseCase } from "#/modules/planning/application/use-cases/pay-card-statement.use-case.js";
+import { ReopenCardStatementUseCase } from "#/modules/planning/application/use-cases/reopen-card-statement.use-case.js";
 import { UpdateCardPurchaseUseCase } from "#/modules/planning/application/use-cases/update-card-purchase.use-case.js";
 import { UpdateCreditCardUseCase } from "#/modules/planning/application/use-cases/update-credit-card.use-case.js";
 import { PlanningUnitOfWork } from "#/modules/planning/infrastructure/database/planning.unit-of-work.js";
@@ -21,6 +22,7 @@ import {
   ListCardStatementsController,
   ListCreditCardsController,
   PayCardStatementController,
+  ReopenCardStatementController,
   UpdateCardPurchaseController,
   UpdateCreditCardController,
 } from "#/modules/planning/presentation/controllers/card.controller.js";
@@ -37,5 +39,6 @@ export const cardControllers = {
   listStatements: new ListCardStatementsController(new ListCardStatementsUseCase(unitOfWork)),
   getStatement: new GetCardStatementController(new GetCardStatementUseCase(unitOfWork)),
   closeStatement: new CloseCardStatementController(new CloseCardStatementUseCase(unitOfWork)),
+  reopenStatement: new ReopenCardStatementController(new ReopenCardStatementUseCase(unitOfWork)),
   payStatement: new PayCardStatementController(new PayCardStatementUseCase(unitOfWork, uuidv7)),
 } as const;

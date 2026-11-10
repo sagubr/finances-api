@@ -12,6 +12,7 @@ import {
   boolean,
   check,
   date,
+  doublePrecision,
   index,
   integer,
   jsonb,
@@ -40,6 +41,10 @@ export const transactionType = pgEnum("transaction_type", [
   "INVESTMENT",
 ]);
 export const transactionStatus = pgEnum("transaction_status", ["PLANNED", "CONFIRMED", "SETTLED"]);
+export const transactionLocationSource = pgEnum("transaction_location_source", [
+  "DEVICE",
+  "MAP_PIN",
+]);
 
 export const accounts = pgTable(
   "accounts",
@@ -158,6 +163,48 @@ export const transactions = pgTable(
       sql`(${table.status} = 'SETTLED' and ${table.settledOn} is not null) or (${table.status} <> 'SETTLED' and ${table.settledOn} is null)`,
     ),
     tenantPolicy("transactions", table.workspaceId),
+  ],
+).enableRLS();
+
+export const transactionLocations = pgTable(
+  "transaction_locations",
+  {
+    id: identity(),
+    workspaceId: bigint("workspace_id", { mode: "bigint" })
+      .notNull()
+      .references(() => workspaces.id),
+    transactionId: bigint("transaction_id", { mode: "bigint" })
+      .notNull()
+      .references(() => transactions.id, { onDelete: "cascade" }),
+    latitude: doublePrecision("latitude").notNull(),
+    longitude: doublePrecision("longitude").notNull(),
+    accuracyMeters: doublePrecision("accuracy_meters"),
+    capturedAt: timestamp("captured_at", { withTimezone: true }).notNull(),
+    source: transactionLocationSource("source").notNull(),
+    createdBy: bigint("created_by", { mode: "bigint" }).references(() => users.id),
+    updatedBy: bigint("updated_by", { mode: "bigint" }).references(() => users.id),
+    ...timestamps,
+  },
+  (table) => [
+    tenantIndex("transaction_locations", table.workspaceId),
+    uniqueIndex("transaction_locations_transaction_unique").on(table.transactionId),
+    check(
+      "transaction_locations_latitude_range",
+      sql`${table.latitude} >= -90 and ${table.latitude} <= 90`,
+    ),
+    check(
+      "transaction_locations_longitude_range",
+      sql`${table.longitude} >= -180 and ${table.longitude} <= 180`,
+    ),
+    check(
+      "transaction_locations_accuracy_positive",
+      sql`${table.accuracyMeters} is null or ${table.accuracyMeters} > 0`,
+    ),
+    check(
+      "transaction_locations_source_accuracy",
+      sql`${table.source} <> 'MAP_PIN' or ${table.accuracyMeters} is null`,
+    ),
+    tenantPolicy("transaction_locations", table.workspaceId),
   ],
 ).enableRLS();
 

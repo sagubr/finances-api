@@ -26,6 +26,9 @@ describe("HTTP contract security primitives", () => {
         DB_SSL_MODE: "verify-full",
         DB_SSL_CA_BASE64: Buffer.from("certificate-authority").toString("base64"),
         DB_SSL_SERVER_NAME: "db.example.com",
+        RESEND_API_KEY: "re_production-key",
+        EMAIL_FROM: "Nummo <no-reply@example.com>",
+        REDIS_URL: "rediss://cache.example.com",
       }),
     });
     const allowed = await app.inject({

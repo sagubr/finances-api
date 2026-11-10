@@ -8,7 +8,7 @@ export const emailSchema = z
   .max(320)
   .transform((value) => value.toLowerCase());
 
-export const passwordSchema = z.string().min(12).max(128);
+export const passwordSchema = z.string().min(8).max(128);
 
 export const registerSchema = z.object({
   email: emailSchema,
@@ -35,6 +35,13 @@ export const loginResponseSchema = z.object({
   data: z.object({ sessionId: publicIdSchema }),
 });
 export type LoginInput = z.infer<typeof loginSchema>;
+
+export const googleCallbackQuerySchema = z.object({
+  code: z.string().min(1).max(4_096).optional(),
+  state: z.string().min(32).max(256),
+  error: z.string().max(256).optional(),
+});
+export type GoogleCallbackQuery = z.infer<typeof googleCallbackQuerySchema>;
 
 export const tokenSchema = z.object({ token: z.string().min(32).max(256) });
 export const confirmationResponseSchema = z.object({

@@ -18,6 +18,7 @@ import type {
   TransactionInput,
   TransactionView,
 } from "#/modules/transactions/dtos/transaction.dto.js";
+import { transactionListResponseSchema } from "#/modules/transactions/dtos/transaction.dto.js";
 import { describe, expect, it, vi } from "vitest";
 
 const context: RequestContext = {
@@ -46,6 +47,7 @@ const item: TransactionView = {
   settledOn: "2026-11-02",
   sourceModule: null,
   sourcePublicId: null,
+  location: null,
   version: 1,
   deletedAt: null,
 };
@@ -71,6 +73,7 @@ const createScope = () => {
   const revertStatus = vi.fn();
   const transactions: ITransactionRepository = {
     list: listTransactions,
+    map: vi.fn(),
     find: vi.fn(),
     create: createTransaction,
     update: vi.fn(),
@@ -106,6 +109,20 @@ const unitOfWork = (scope: TransactionsWorkContext): ITransactionsUnitOfWork => 
 });
 
 describe("transaction use cases", () => {
+  it("serializes legacy UUID correlation IDs in transaction lists", () => {
+    const legacyCorrelationId = "550e8400-e29b-41d4-a716-446655440000";
+
+    expect(
+      transactionListResponseSchema.safeParse({
+        success: true,
+        data: {
+          items: [{ ...item, sourcePublicId: legacyCorrelationId }],
+          pageInfo: { nextCursor: null, hasNextPage: false },
+        },
+      }).success,
+    ).toBe(true);
+  });
+
   it("creates a transaction through the idempotency boundary", async () => {
     const { scope, createTransaction, idempotency } = createScope();
     const useCase = new CreateTransactionUseCase(unitOfWork(scope), () => item.id);

@@ -4,6 +4,7 @@ import type { CreateTransactionUseCase } from "#/modules/transactions/applicatio
 import type { CreateTransferUseCase } from "#/modules/transactions/application/use-cases/create-transfer.use-case.js";
 import type { DeleteTransactionUseCase } from "#/modules/transactions/application/use-cases/delete-transaction.use-case.js";
 import type { GetMonthlySummaryUseCase } from "#/modules/transactions/application/use-cases/get-monthly-summary.use-case.js";
+import type { GetTransactionMapUseCase } from "#/modules/transactions/application/use-cases/get-transaction-map.use-case.js";
 import type { GetTransactionUseCase } from "#/modules/transactions/application/use-cases/get-transaction.use-case.js";
 import type { ListTransactionsUseCase } from "#/modules/transactions/application/use-cases/list-transactions.use-case.js";
 import type { RestoreTransactionUseCase } from "#/modules/transactions/application/use-cases/restore-transaction.use-case.js";
@@ -14,6 +15,7 @@ import type {
   ListTransactionsQuery,
   ResourceIdParams,
   TransactionInput,
+  TransactionMapQuery,
   TransactionPatch,
   TransferInput,
   VersionInput,
@@ -26,6 +28,14 @@ type IdempotencyHeaders = Readonly<{ "idempotency-key": string }>;
 export class ListTransactionsController {
   constructor(private readonly useCase: ListTransactionsUseCase) {}
   async handle(request: FastifyRequest<{ Querystring: ListTransactionsQuery }>) {
+    return response(
+      await this.useCase.execute(requireRequestContext(request.requestContext), request.query),
+    );
+  }
+}
+export class GetTransactionMapController {
+  constructor(private readonly useCase: GetTransactionMapUseCase) {}
+  async handle(request: FastifyRequest<{ Querystring: TransactionMapQuery }>) {
     return response(
       await this.useCase.execute(requireRequestContext(request.requestContext), request.query),
     );

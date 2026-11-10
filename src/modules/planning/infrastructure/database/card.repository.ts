@@ -1,6 +1,5 @@
 import type { TenantDatabase } from "#/infrastructure/database/tenant-unit-of-work.js";
 import type { ICardRepository } from "#/modules/planning/application/ports/card.repository.js";
-import { resolveCardCycle } from "#/modules/planning/domain/card-cycle.js";
 import type {
   CardPatch,
   CreditCardView,
@@ -23,6 +22,7 @@ import {
   accounts,
   categories,
   transactionHistory,
+  transactionLocations,
   transactions,
 } from "#/modules/transactions/infrastructure/database/transactions.schema.js";
 import {
@@ -34,6 +34,7 @@ import { ApplicationError } from "#/shared/application/application.error.js";
 import { createCursorPage, decodeCursor } from "#/shared/pagination/cursor-pagination.js";
 import { and, desc, eq, inArray, isNull, lt, sql } from "drizzle-orm";
 import { CardStatementProjectionWriter } from "./card-statement-projection.writer.js";
+import { materializeOpenCardStatement } from "./open-card-statement.js";
 
 const safeMoney = (value: bigint): number => {
   const number = Number(value);
@@ -373,34 +374,19 @@ export class CardRepository implements ICardRepository {
         category: "validation",
         code: "CARD_PURCHASE_CATEGORY_INVALID",
       });
-    const cycle = resolveCardCycle(input.occurredOn, card.closingDay, card.dueDay);
-    const statementRows = await this.database
-      .insert(cardStatements)
-      .values({
-        publicId: ids.statement,
-        workspaceId: this.context.workspaceId,
-        cardId: card.id,
-        cycleStartOn: cycle.startsOn,
-        cycleEndOn: cycle.endsOn,
-        dueOn: cycle.dueOn,
-        accountingMode: card.accountingMode,
-      })
-      .onConflictDoUpdate({
-        target: [cardStatements.cardId, cardStatements.cycleStartOn],
-        set: { updatedAt: sql`${cardStatements.updatedAt}` },
-      })
-      .returning();
-    const materializedStatement = statementRows[0];
-    if (!materializedStatement) throw new Error("Statement was not materialized.");
-    const statement = await this.lockStatement(materializedStatement.id);
-    if (statement.status !== "OPEN")
-      throw new ApplicationError(
-        "A fatura já foi fechada; a compra exige um ajuste no próximo ciclo.",
-        {
-          category: "conflict",
-          code: "STATEMENT_IMMUTABLE",
-        },
-      );
+    let firstStatementId = true;
+    const statement = await materializeOpenCardStatement(this.database, {
+      workspaceId: this.context.workspaceId,
+      card,
+      occurredOn: input.occurredOn,
+      generateId: () => {
+        if (firstStatementId) {
+          firstStatementId = false;
+          return ids.statement;
+        }
+        return this.generateId();
+      },
+    });
     const sequence = await this.nextPurchaseSequence(statement.publicId);
     const createdTransactions = await this.database
       .insert(transactions)
@@ -425,6 +411,7 @@ export class CardRepository implements ICardRepository {
       .returning();
     const transaction = createdTransactions[0];
     if (!transaction) throw new Error("Card transaction insert did not return an id.");
+    if (input.location) await this.upsertLocation(transaction.id, input.location);
     await this.database.insert(statementCycles).values({
       workspaceId: this.context.workspaceId,
       statementId: statement.id,
@@ -454,6 +441,7 @@ export class CardRepository implements ICardRepository {
       competenceMonth: input.occurredOn.slice(0, 7),
       currency: card.currency,
       status: "CONFIRMED" as const,
+      location: input.location ?? null,
       version: 1,
     };
     await this.writePurchaseHistory(transaction.id, result.id, result.version, "CREATED", result);
@@ -491,36 +479,12 @@ export class CardRepository implements ICardRepository {
         code: "CARD_PURCHASE_CATEGORY_INVALID",
       });
 
-    const cycle = resolveCardCycle(
-      input.occurredOn,
-      selected.card.closingDay,
-      selected.card.dueDay,
-    );
-    const materializedTargetStatement = (
-      await this.database
-        .insert(cardStatements)
-        .values({
-          publicId: this.generateId(),
-          workspaceId: this.context.workspaceId,
-          cardId: selected.card.id,
-          cycleStartOn: cycle.startsOn,
-          cycleEndOn: cycle.endsOn,
-          dueOn: cycle.dueOn,
-          accountingMode: selected.card.accountingMode,
-        })
-        .onConflictDoUpdate({
-          target: [cardStatements.cardId, cardStatements.cycleStartOn],
-          set: { updatedAt: sql`${cardStatements.updatedAt}` },
-        })
-        .returning()
-    )[0];
-    if (!materializedTargetStatement) throw new Error("Target statement was not materialized.");
-    const targetStatement = await this.lockStatement(materializedTargetStatement.id);
-    if (targetStatement.status !== "OPEN")
-      throw new ApplicationError("A compra não pode ser movida para uma fatura fechada.", {
-        category: "conflict",
-        code: "STATEMENT_IMMUTABLE",
-      });
+    const targetStatement = await materializeOpenCardStatement(this.database, {
+      workspaceId: this.context.workspaceId,
+      card: selected.card,
+      occurredOn: input.occurredOn,
+      generateId: this.generateId,
+    });
 
     const changedStatement = targetStatement.id !== selected.statement.id;
     const sourceSequence = changedStatement
@@ -549,6 +513,13 @@ export class CardRepository implements ICardRepository {
       .returning();
     const updated =
       updatedRows[0] ?? this.versionConflict("A compra foi alterada por outra operação.");
+
+    const location =
+      input.location === undefined
+        ? this.mapLocation(selected.location)
+        : input.location === null
+          ? await this.deleteLocation(updated.id)
+          : this.mapLocation(await this.upsertLocation(updated.id, input.location));
 
     if (changedStatement) {
       await this.database
@@ -586,6 +557,7 @@ export class CardRepository implements ICardRepository {
       competenceMonth: input.occurredOn.slice(0, 7),
       currency: updated.currency,
       status: "CONFIRMED" as const,
+      location,
       version: updated.version,
     };
     await this.writeEvent(
@@ -687,10 +659,15 @@ export class CardRepository implements ICardRepository {
       .limit(1);
     const selected = rows[0] ?? this.statementNotFound();
     const purchaseRows = await this.database
-      .select({ transaction: transactions, categoryId: categories.publicId })
+      .select({
+        transaction: transactions,
+        categoryId: categories.publicId,
+        location: transactionLocations,
+      })
       .from(statementCycles)
       .innerJoin(transactions, eq(transactions.id, statementCycles.transactionId))
       .innerJoin(categories, eq(categories.id, transactions.categoryId))
+      .leftJoin(transactionLocations, eq(transactionLocations.transactionId, transactions.id))
       .where(
         and(
           eq(statementCycles.workspaceId, this.context.workspaceId),
@@ -703,13 +680,14 @@ export class CardRepository implements ICardRepository {
       .orderBy(desc(transactions.publicId))
       .limit(query.limit + 1);
     const purchases = createCursorPage(
-      purchaseRows.map(({ transaction, categoryId }) => ({
+      purchaseRows.map(({ transaction, categoryId, location }) => ({
         id: transaction.publicId,
         categoryId,
         description: transaction.description,
         amountCents: safeMoney(transaction.amountCents),
         currency: transaction.currency,
         occurredOn: transaction.occurredOn,
+        location: this.mapLocation(location),
         editable:
           selected.statement.status === "OPEN" &&
           isManualCardPurchaseSource(
@@ -776,6 +754,40 @@ export class CardRepository implements ICardRepository {
       version: statement.version,
     };
     await this.writeEvent("StatementClosed", statement.publicId, statement.version, result);
+    return result;
+  }
+
+  async reopenStatement(statementId: string, expectedVersion: number) {
+    const rows = await this.database
+      .update(cardStatements)
+      .set({
+        status: "OPEN",
+        closedAt: null,
+        version: sql`${cardStatements.version} + 1`,
+        updatedAt: new Date(),
+      })
+      .where(
+        and(
+          eq(cardStatements.workspaceId, this.context.workspaceId),
+          eq(cardStatements.publicId, statementId),
+          eq(cardStatements.version, expectedVersion),
+          eq(cardStatements.status, "CLOSED"),
+          eq(cardStatements.paidCents, 0n),
+        ),
+      )
+      .returning();
+    const statement =
+      rows[0] ??
+      this.versionConflict(
+        "A fatura não pode ser reaberta porque foi alterada, está paga ou já está aberta.",
+      );
+    const result = {
+      id: statement.publicId,
+      status: "OPEN" as const,
+      totalCents: safeMoney(statement.totalCents),
+      version: statement.version,
+    };
+    await this.writeEvent("StatementReopened", statement.publicId, statement.version, result);
     return result;
   }
 
@@ -930,11 +942,17 @@ export class CardRepository implements ICardRepository {
   private async requireEditablePurchase(cardPublicId: string, purchasePublicId: string) {
     const selected = (
       await this.database
-        .select({ transaction: transactions, statement: cardStatements, card: creditCards })
+        .select({
+          transaction: transactions,
+          statement: cardStatements,
+          card: creditCards,
+          location: transactionLocations,
+        })
         .from(transactions)
         .innerJoin(statementCycles, eq(statementCycles.transactionId, transactions.id))
         .innerJoin(cardStatements, eq(cardStatements.id, statementCycles.statementId))
         .innerJoin(creditCards, eq(creditCards.id, cardStatements.cardId))
+        .leftJoin(transactionLocations, eq(transactionLocations.transactionId, transactions.id))
         .where(
           and(
             eq(transactions.workspaceId, this.context.workspaceId),
@@ -971,17 +989,61 @@ export class CardRepository implements ICardRepository {
       });
     return selected;
   }
-  private async lockStatement(id: bigint) {
-    const statement = (
-      await this.database
-        .select()
-        .from(cardStatements)
-        .where(eq(cardStatements.id, id))
-        .limit(1)
-        .for("update")
-    )[0];
-    if (!statement) throw new Error("Statement lock target was not found.");
-    return statement;
+  private mapLocation(location: typeof transactionLocations.$inferSelect | null | undefined) {
+    return location
+      ? {
+          latitude: location.latitude,
+          longitude: location.longitude,
+          accuracyMeters: location.accuracyMeters,
+          capturedAt: location.capturedAt.toISOString(),
+          source: location.source,
+        }
+      : null;
+  }
+  private async upsertLocation(
+    transactionId: bigint,
+    location: NonNullable<Parameters<ICardRepository["createPurchase"]>[2]["location"]>,
+  ) {
+    const rows = await this.database
+      .insert(transactionLocations)
+      .values({
+        workspaceId: this.context.workspaceId,
+        transactionId,
+        latitude: location.latitude,
+        longitude: location.longitude,
+        accuracyMeters: location.accuracyMeters,
+        capturedAt: new Date(location.capturedAt),
+        source: location.source,
+        createdBy: this.context.userId,
+        updatedBy: this.context.userId,
+      })
+      .onConflictDoUpdate({
+        target: transactionLocations.transactionId,
+        set: {
+          latitude: location.latitude,
+          longitude: location.longitude,
+          accuracyMeters: location.accuracyMeters,
+          capturedAt: new Date(location.capturedAt),
+          source: location.source,
+          updatedBy: this.context.userId,
+          updatedAt: new Date(),
+        },
+      })
+      .returning();
+    const row = rows[0];
+    if (!row) throw new Error("Card purchase location upsert did not return a row.");
+    return row;
+  }
+  private async deleteLocation(transactionId: bigint): Promise<null> {
+    await this.database
+      .delete(transactionLocations)
+      .where(
+        and(
+          eq(transactionLocations.workspaceId, this.context.workspaceId),
+          eq(transactionLocations.transactionId, transactionId),
+        ),
+      );
+    return null;
   }
   private async nextPurchaseSequence(statementPublicId: string): Promise<number> {
     const row = (
@@ -1051,6 +1113,13 @@ export class CardRepository implements ICardRepository {
     });
   }
   private async writeEvent(name: string, aggregateId: string, version: number, payload: unknown) {
+    const eventPayload =
+      payload && typeof payload === "object" && "location" in payload
+        ? Object.fromEntries([
+            ...Object.entries(payload).filter(([key]) => key !== "location"),
+            ["hasLocation", (payload as { location?: unknown }).location !== null],
+          ])
+        : payload;
     await this.database.insert(outboxEvents).values({
       eventId: this.generateId(),
       workspaceId: this.context.workspaceId,
@@ -1060,7 +1129,7 @@ export class CardRepository implements ICardRepository {
       aggregatePublicId: aggregateId,
       aggregateVersion: version,
       correlationId: this.generateId(),
-      payload,
+      payload: eventPayload,
       occurredAt: new Date(),
     });
   }

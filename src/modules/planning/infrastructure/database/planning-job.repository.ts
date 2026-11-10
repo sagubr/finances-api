@@ -4,7 +4,6 @@ import type {
   IPlanningJobRepository,
   ScheduledRecurringRule,
 } from "#/modules/planning/application/ports/planning-job.repository.js";
-import { resolveCardCycle } from "#/modules/planning/domain/card-cycle.js";
 import {
   budgets,
   budgetThresholdDeliveries,
@@ -28,6 +27,7 @@ import {
 import { ApplicationError } from "#/shared/application/application.error.js";
 import { and, eq, gte, inArray, isNull, lt, lte, ne, or, sql } from "drizzle-orm";
 import { CardStatementProjectionWriter } from "./card-statement-projection.writer.js";
+import { materializeOpenCardStatement } from "./open-card-statement.js";
 
 export class PlanningJobRepository implements IPlanningJobRepository {
   private readonly projection: CardStatementProjectionWriter;
@@ -112,7 +112,7 @@ export class PlanningJobRepository implements IPlanningJobRepository {
             ),
           )
           .limit(1)
-          .for("update")
+          .for("update", { of: recurringRules })
       )[0] ?? null
     );
   }
@@ -185,40 +185,12 @@ export class PlanningJobRepository implements IPlanningJobRepository {
     const transactionId = rows[0]?.id ?? null;
     if (!transactionId || !card) return transactionId;
 
-    const cycle = resolveCardCycle(logicalDate, card.closingDay, card.dueDay);
-    const materializedStatement = (
-      await this.database
-        .insert(cardStatements)
-        .values({
-          publicId: this.generateId(),
-          workspaceId: this.workspaceId,
-          cardId: card.id,
-          cycleStartOn: cycle.startsOn,
-          cycleEndOn: cycle.endsOn,
-          dueOn: cycle.dueOn,
-          accountingMode: card.accountingMode,
-        })
-        .onConflictDoUpdate({
-          target: [cardStatements.cardId, cardStatements.cycleStartOn],
-          set: { updatedAt: sql`${cardStatements.updatedAt}` },
-        })
-        .returning()
-    )[0];
-    if (!materializedStatement) throw new Error("Recurring card statement was not materialized.");
-    const statement = (
-      await this.database
-        .select()
-        .from(cardStatements)
-        .where(eq(cardStatements.id, materializedStatement.id))
-        .limit(1)
-        .for("update")
-    )[0];
-    if (!statement) throw new Error("Recurring card statement lock target was not found.");
-    if (statement.status !== "OPEN")
-      throw new ApplicationError("A fatura da recorrência já está fechada.", {
-        category: "conflict",
-        code: "RECURRENCE_STATEMENT_IMMUTABLE",
-      });
+    const statement = await materializeOpenCardStatement(this.database, {
+      workspaceId: this.workspaceId,
+      card,
+      occurredOn: logicalDate,
+      generateId: this.generateId,
+    });
     await this.database.insert(statementCycles).values({
       workspaceId: this.workspaceId,
       statementId: statement.id,

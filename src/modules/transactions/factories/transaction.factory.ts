@@ -3,6 +3,7 @@ import { CreateTransactionUseCase } from "#/modules/transactions/application/use
 import { CreateTransferUseCase } from "#/modules/transactions/application/use-cases/create-transfer.use-case.js";
 import { DeleteTransactionUseCase } from "#/modules/transactions/application/use-cases/delete-transaction.use-case.js";
 import { GetMonthlySummaryUseCase } from "#/modules/transactions/application/use-cases/get-monthly-summary.use-case.js";
+import { GetTransactionMapUseCase } from "#/modules/transactions/application/use-cases/get-transaction-map.use-case.js";
 import { GetTransactionUseCase } from "#/modules/transactions/application/use-cases/get-transaction.use-case.js";
 import { ListTransactionsUseCase } from "#/modules/transactions/application/use-cases/list-transactions.use-case.js";
 import { RestoreTransactionUseCase } from "#/modules/transactions/application/use-cases/restore-transaction.use-case.js";
@@ -16,6 +17,7 @@ import {
   DeleteTransactionController,
   GetMonthlySummaryController,
   GetTransactionController,
+  GetTransactionMapController,
   ListTransactionsController,
   RestoreTransactionController,
   RevertTransactionStatusController,
@@ -27,6 +29,7 @@ import { v7 as uuidv7 } from "uuid";
 
 export const transactionControllers = {
   list: new ListTransactionsController(new ListTransactionsUseCase(transactionsUnitOfWork)),
+  map: new GetTransactionMapController(new GetTransactionMapUseCase(transactionsUnitOfWork)),
   get: new GetTransactionController(new GetTransactionUseCase(transactionsUnitOfWork)),
   create: new CreateTransactionController(
     new CreateTransactionUseCase(transactionsUnitOfWork, uuidv7),

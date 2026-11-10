@@ -43,7 +43,12 @@ export class JobRepository implements IJobRepository {
   async complete(id: bigint): Promise<void> {
     await this.database
       .update(jobRuns)
-      .set({ status: "SUCCEEDED", progress: { percent: 100 }, finishedAt: new Date() })
+      .set({
+        status: "SUCCEEDED",
+        progress: { percent: 100 },
+        errorCode: null,
+        finishedAt: new Date(),
+      })
       .where(eq(jobRuns.id, id));
   }
 

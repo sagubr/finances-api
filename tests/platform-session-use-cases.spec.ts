@@ -8,6 +8,7 @@ const createRepository = () => {
   const revokeByTokenHash = vi.fn();
   const repository: IIdentityRepository = {
     registerUser,
+    authenticateExternalIdentity: vi.fn(),
     findCredentialByEmail: vi.fn(),
     countRecentFailedLoginAttemptsByIp: vi.fn(),
     recordLoginAttempt: vi.fn(),

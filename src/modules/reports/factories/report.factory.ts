@@ -9,6 +9,7 @@ import { GetAnnualReportUseCase } from "#/modules/reports/application/use-cases/
 import { GetCashflowForecastUseCase } from "#/modules/reports/application/use-cases/get-cashflow-forecast.use-case.js";
 import { GetCategorySpendingUseCase } from "#/modules/reports/application/use-cases/get-category-spending.use-case.js";
 import { GetExportUseCase } from "#/modules/reports/application/use-cases/get-export.use-case.js";
+import { GetMonthlyCalendarUseCase } from "#/modules/reports/application/use-cases/get-monthly-calendar.use-case.js";
 import { ReportUnitOfWork } from "#/modules/reports/infrastructure/database/report.unit-of-work.js";
 import {
   CompareReportController,
@@ -19,6 +20,7 @@ import {
   GetCashflowForecastController,
   GetCategorySpendingController,
   GetExportController,
+  GetMonthlyCalendarController,
 } from "#/modules/reports/presentation/controllers/report.controller.js";
 import { v7 as uuidv7 } from "uuid";
 
@@ -32,6 +34,7 @@ export const reportControllers = {
   categorySpending: new GetCategorySpendingController(
     new GetCategorySpendingUseCase(unitOfWork, now),
   ),
+  monthlyCalendar: new GetMonthlyCalendarController(new GetMonthlyCalendarUseCase(unitOfWork, now)),
   createExport: new CreateExportController(new CreateExportUseCase(unitOfWork, uuidv7)),
   getExport: new GetExportController(new GetExportUseCase(unitOfWork)),
   createDownloadToken: new CreateDownloadTokenController(

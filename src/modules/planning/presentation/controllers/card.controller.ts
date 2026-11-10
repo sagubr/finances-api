@@ -7,6 +7,7 @@ import type { GetCardStatementUseCase } from "#/modules/planning/application/use
 import type { ListCardStatementsUseCase } from "#/modules/planning/application/use-cases/list-card-statements.use-case.js";
 import type { ListCreditCardsUseCase } from "#/modules/planning/application/use-cases/list-credit-cards.use-case.js";
 import type { PayCardStatementUseCase } from "#/modules/planning/application/use-cases/pay-card-statement.use-case.js";
+import type { ReopenCardStatementUseCase } from "#/modules/planning/application/use-cases/reopen-card-statement.use-case.js";
 import type { UpdateCardPurchaseUseCase } from "#/modules/planning/application/use-cases/update-card-purchase.use-case.js";
 import type { UpdateCreditCardUseCase } from "#/modules/planning/application/use-cases/update-credit-card.use-case.js";
 import type {
@@ -147,6 +148,18 @@ export class GetCardStatementController {
 }
 export class CloseCardStatementController {
   constructor(private readonly useCase: CloseCardStatementUseCase) {}
+  async handle(request: FastifyRequest<{ Params: ResourceIdParams; Body: VersionInput }>) {
+    return response(
+      await this.useCase.execute(
+        requireRequestContext(request.requestContext),
+        request.params.id,
+        request.body.expectedVersion,
+      ),
+    );
+  }
+}
+export class ReopenCardStatementController {
+  constructor(private readonly useCase: ReopenCardStatementUseCase) {}
   async handle(request: FastifyRequest<{ Params: ResourceIdParams; Body: VersionInput }>) {
     return response(
       await this.useCase.execute(

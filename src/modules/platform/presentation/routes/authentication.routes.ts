@@ -3,6 +3,7 @@ import {
   changePasswordSchema,
   confirmationResponseSchema,
   emailBodySchema,
+  googleCallbackQuerySchema,
   loginResponseSchema,
   loginSchema,
   passwordChangedResponseSchema,
@@ -13,6 +14,7 @@ import {
   tokenSchema,
   type ChangePasswordInput,
   type EmailInput,
+  type GoogleCallbackQuery,
   type LoginInput,
   type RegisterInput,
   type ResetPasswordInput,
@@ -28,6 +30,28 @@ import type { FastifyPluginAsyncZod } from "fastify-type-provider-zod";
 
 export const authenticationRoutes: FastifyPluginAsyncZod = (app) => {
   const csrf = app.csrfProtection.bind(app);
+  app.get(
+    "/auth/google",
+    {
+      config: { rateLimit: { max: 20, timeWindow: "5 minutes" } },
+      schema: { operationId: "startGoogleAuthentication", tags: ["Identity"], security: [] },
+    },
+    (request, reply) => authenticationControllers.google.start(request, reply),
+  );
+  app.get<{ Querystring: GoogleCallbackQuery }>(
+    "/auth/callback/google",
+    {
+      config: { rateLimit: { max: 20, timeWindow: "5 minutes" } },
+      schema: {
+        operationId: "completeGoogleAuthentication",
+        tags: ["Identity"],
+        security: [],
+        querystring: googleCallbackQuerySchema,
+        response: { 400: apiErrorResponseSchema, 503: apiErrorResponseSchema },
+      },
+    },
+    (request, reply) => authenticationControllers.google.callback(request, reply),
+  );
   app.post<{ Body: RegisterInput; Headers: CsrfHeaders }>(
     "/auth/register",
     {

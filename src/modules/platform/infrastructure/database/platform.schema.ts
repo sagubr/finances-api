@@ -61,6 +61,25 @@ export const userCredentials = authSchema.table("user_credentials", {
   changedAt: timestamp("changed_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+export const externalIdentities = authSchema.table(
+  "external_identities",
+  {
+    id: identity(),
+    userId: bigint("user_id", { mode: "bigint" })
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    provider: varchar("provider", { length: 32 }).notNull(),
+    subject: varchar("subject", { length: 255 }).notNull(),
+    providerEmail: varchar("provider_email", { length: 320 }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    lastLoginAt: timestamp("last_login_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("external_identities_provider_subject_unique").on(table.provider, table.subject),
+    index("external_identities_user_idx").on(table.userId),
+  ],
+);
+
 export const workspaces = pgTable("workspaces", {
   id: identity(),
   publicId: publicId(),

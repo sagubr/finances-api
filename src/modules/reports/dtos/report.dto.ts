@@ -16,6 +16,7 @@ export const annualReportQuerySchema = z.object({
 });
 export const compareReportQuerySchema = z.object({ current: monthSchema, previous: monthSchema });
 export const categorySpendingQuerySchema = z.object({ month: monthSchema });
+export const monthlyCalendarQuerySchema = z.object({ month: monthSchema });
 export const cashflowRangeSchema = z
   .object({ from: dateSchema, to: dateSchema })
   .refine(({ from, to }) => from <= to, { message: "from must be before or equal to to" })
@@ -100,6 +101,24 @@ export const categorySpendingSchema = reportMetadataSchema.extend({
     totalCents: moneySchema,
   }),
 });
+export const monthlyCalendarSchema = reportMetadataSchema.extend({
+  month: monthSchema,
+  items: z.array(
+    z.object({
+      date: dateSchema,
+      realizedExpenseCents: moneySchema,
+      plannedExpenseCents: moneySchema,
+      realizedCount: z.number().int().nonnegative(),
+      plannedCount: z.number().int().nonnegative(),
+    }),
+  ),
+  totals: z.object({
+    realizedExpenseCents: moneySchema,
+    plannedExpenseCents: moneySchema,
+    realizedCount: z.number().int().nonnegative(),
+    plannedCount: z.number().int().nonnegative(),
+  }),
+});
 export const exportAcceptedSchema = z.object({ id: uuidSchema, status: z.literal("PENDING") });
 export const exportSchema = z.object({
   id: uuidSchema,
@@ -122,6 +141,7 @@ export const annualReportResponseSchema = success(annualReportSchema);
 export const comparisonReportResponseSchema = success(comparisonReportSchema);
 export const cashflowForecastResponseSchema = success(cashflowForecastSchema);
 export const categorySpendingResponseSchema = success(categorySpendingSchema);
+export const monthlyCalendarResponseSchema = success(monthlyCalendarSchema);
 export const exportAcceptedResponseSchema = success(exportAcceptedSchema);
 export const exportResponseSchema = success(exportSchema);
 export const downloadTokenResponseSchema = success(downloadTokenSchema);
@@ -130,6 +150,7 @@ export type AnnualReportQuery = z.infer<typeof annualReportQuerySchema>;
 export type CompareReportQuery = z.infer<typeof compareReportQuerySchema>;
 export type CashflowRange = z.infer<typeof cashflowRangeSchema>;
 export type CategorySpendingQuery = z.infer<typeof categorySpendingQuerySchema>;
+export type MonthlyCalendarQuery = z.infer<typeof monthlyCalendarQuerySchema>;
 export type ExportInput = z.infer<typeof exportInputSchema>;
 export type ExportIdParams = z.infer<typeof exportIdParamsSchema>;
 export type DownloadExportInput = z.infer<typeof downloadExportInputSchema>;
@@ -137,4 +158,5 @@ export type AnnualReport = z.infer<typeof annualReportSchema>;
 export type ComparisonReport = z.infer<typeof comparisonReportSchema>;
 export type CashflowForecast = z.infer<typeof cashflowForecastSchema>;
 export type CategorySpending = z.infer<typeof categorySpendingSchema>;
+export type MonthlyCalendar = z.infer<typeof monthlyCalendarSchema>;
 export type ExportView = z.infer<typeof exportSchema>;

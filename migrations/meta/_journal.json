@@ -8,6 +8,20 @@
       "when": 1793699567385,
       "tag": "0000_glossy_exiles",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1794265050692,
+      "tag": "0001_purple_bullseye",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1794268704687,
+      "tag": "0002_parallel_miss_america",
+      "breakpoints": true
     }
   ]
 }

@@ -7,6 +7,7 @@ import type {
 } from "#/modules/platform/application/ports/identity.repository.js";
 import {
   emailTokens,
+  externalIdentities,
   loginAttempts,
   outboxEvents,
   sessions,
@@ -116,6 +117,132 @@ export class IdentityRepository implements IIdentityRepository {
         return null;
       throw error;
     }
+  }
+
+  async authenticateExternalIdentity(
+    input: Parameters<IIdentityRepository["authenticateExternalIdentity"]>[0],
+  ): Promise<bigint | null> {
+    return this.database.transaction(async (transaction) => {
+      const lockKeys = [
+        `external:${input.provider}:${input.subject}`,
+        `email:${input.email.toLowerCase()}`,
+      ].sort();
+      for (const key of lockKeys)
+        await transaction.execute(sql`select pg_advisory_xact_lock(hashtextextended(${key}, 0))`);
+
+      const linkedRows = await transaction
+        .select({ userId: users.id, disabledAt: users.disabledAt })
+        .from(externalIdentities)
+        .innerJoin(users, eq(users.id, externalIdentities.userId))
+        .where(
+          and(
+            eq(externalIdentities.provider, input.provider),
+            eq(externalIdentities.subject, input.subject),
+          ),
+        )
+        .limit(1);
+      const linked = linkedRows[0];
+      if (linked) {
+        if (linked.disabledAt) return null;
+        await transaction
+          .update(externalIdentities)
+          .set({ providerEmail: input.email, lastLoginAt: input.authenticatedAt })
+          .where(
+            and(
+              eq(externalIdentities.provider, input.provider),
+              eq(externalIdentities.subject, input.subject),
+            ),
+          );
+        await transaction
+          .update(users)
+          .set({
+            emailConfirmedAt: sql`coalesce(${users.emailConfirmedAt}, ${input.authenticatedAt})`,
+          })
+          .where(eq(users.id, linked.userId));
+        return linked.userId;
+      }
+
+      const matchingUsers = await transaction
+        .select({ id: users.id, disabledAt: users.disabledAt })
+        .from(users)
+        .where(sql`lower(${users.email}) = ${input.email.toLowerCase()}`)
+        .limit(1);
+      const matchingUser = matchingUsers[0];
+      if (matchingUser?.disabledAt) return null;
+
+      let userId = matchingUser?.id;
+      let workspaceId: bigint | undefined;
+      if (userId === undefined) {
+        const createdUsers = await transaction
+          .insert(users)
+          .values({
+            publicId: input.userPublicId,
+            email: input.email,
+            displayName: input.displayName,
+            emailConfirmedAt: input.authenticatedAt,
+          })
+          .returning({ id: users.id });
+        userId = createdUsers[0]?.id;
+        if (userId === undefined) throw new Error("User insert did not return an id.");
+
+        const createdWorkspaces = await transaction
+          .insert(workspaces)
+          .values({ publicId: input.workspacePublicId, name: input.workspaceName })
+          .returning({ id: workspaces.id });
+        workspaceId = createdWorkspaces[0]?.id;
+        if (workspaceId === undefined) throw new Error("Workspace insert did not return an id.");
+        await transaction.execute(
+          sql`select set_config('app.workspace_id', ${workspaceId.toString()}, true)`,
+        );
+        await transaction.execute(
+          sql`select set_config('app.actor_id', ${userId.toString()}, true)`,
+        );
+        await transaction.insert(workspaceMembers).values({ workspaceId, userId, role: "OWNER" });
+        await transaction.insert(outboxEvents).values([
+          {
+            eventId: input.userRegisteredEventId,
+            workspaceId,
+            eventName: "UserRegistered",
+            eventVersion: 1,
+            aggregateType: "user",
+            aggregatePublicId: input.userPublicId,
+            aggregateVersion: 1,
+            correlationId: input.correlationId,
+            payload: { name: input.workspaceName, provider: input.provider },
+            occurredAt: input.authenticatedAt,
+          },
+          {
+            eventId: input.workspaceCreatedEventId,
+            workspaceId,
+            eventName: "WorkspaceCreated",
+            eventVersion: 1,
+            aggregateType: "workspace",
+            aggregatePublicId: input.workspacePublicId,
+            aggregateVersion: 1,
+            correlationId: input.correlationId,
+            payload: {},
+            occurredAt: input.authenticatedAt,
+          },
+        ]);
+      } else {
+        await transaction
+          .update(users)
+          .set({
+            emailConfirmedAt: sql`coalesce(${users.emailConfirmedAt}, ${input.authenticatedAt})`,
+          })
+          .where(eq(users.id, userId));
+      }
+
+      await transaction.insert(externalIdentities).values({
+        userId,
+        provider: input.provider,
+        subject: input.subject,
+        providerEmail: input.email,
+        createdAt: input.authenticatedAt,
+        lastLoginAt: input.authenticatedAt,
+      });
+      return userId;
+    });
   }
 
   async findCredentialByEmail(email: string) {
@@ -263,6 +390,16 @@ export class IdentityRepository implements IIdentityRepository {
 
   async createEmailToken(input: Parameters<IIdentityRepository["createEmailToken"]>[0]) {
     await this.database.transaction(async (transaction) => {
+      await transaction
+        .update(emailTokens)
+        .set({ consumedAt: new Date() })
+        .where(
+          and(
+            eq(emailTokens.userId, input.userId),
+            eq(emailTokens.purpose, input.purpose),
+            isNull(emailTokens.consumedAt),
+          ),
+        );
       await transaction.insert(emailTokens).values({
         publicId: input.publicId,
         userId: input.userId,
@@ -302,13 +439,16 @@ export class IdentityRepository implements IIdentityRepository {
       const token = consumed[0];
       if (!token) return false;
       await transaction
-        .update(userCredentials)
-        .set({
-          passwordHash,
-          passwordVersion: sql`${userCredentials.passwordVersion} + 1`,
-          changedAt: new Date(),
-        })
-        .where(eq(userCredentials.userId, token.userId));
+        .insert(userCredentials)
+        .values({ userId: token.userId, passwordHash, changedAt: new Date() })
+        .onConflictDoUpdate({
+          target: userCredentials.userId,
+          set: {
+            passwordHash,
+            passwordVersion: sql`${userCredentials.passwordVersion} + 1`,
+            changedAt: new Date(),
+          },
+        });
       await transaction
         .update(sessions)
         .set({ revokedAt: sql`coalesce(${sessions.revokedAt}, now())` })

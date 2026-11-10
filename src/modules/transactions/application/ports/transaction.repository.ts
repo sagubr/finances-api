@@ -1,6 +1,8 @@
 import type {
   ListTransactionsQuery,
   TransactionInput,
+  TransactionMapQuery,
+  TransactionMapView,
   TransactionPatch,
   TransactionView,
   TransferInput,
@@ -20,6 +22,7 @@ export type MonthlyTransactionEntry = Readonly<{
 
 export interface ITransactionRepository {
   list(query: ListTransactionsQuery): Promise<TransactionPage>;
+  map(query: TransactionMapQuery): Promise<TransactionMapView>;
   find(publicId: string): Promise<TransactionView>;
   create(publicId: string, input: TransactionInput): Promise<TransactionView>;
   update(publicId: string, input: TransactionPatch): Promise<TransactionView>;

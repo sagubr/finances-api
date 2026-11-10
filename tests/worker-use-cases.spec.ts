@@ -5,6 +5,7 @@ import type {
   ScheduledJob,
 } from "#/modules/platform/application/ports/job.repository.js";
 import type { IMaintenanceRepository } from "#/modules/platform/application/ports/maintenance.repository.js";
+import { ApplicationError } from "#/shared/application/application.error.js";
 import type { IJobHandler } from "#/worker/application/job-handler.js";
 import type {
   IWorkerUnitOfWork,
@@ -13,6 +14,7 @@ import type {
 import { CleanExpiredImportFilesUseCase } from "#/worker/application/use-cases/clean-expired-import-files.use-case.js";
 import { ProcessNextJobUseCase } from "#/worker/application/use-cases/process-next-job.use-case.js";
 import { ScheduleMaintenanceUseCase } from "#/worker/application/use-cases/schedule-maintenance.use-case.js";
+import { SettleOverdueTransactionsUseCase } from "#/worker/application/use-cases/settle-overdue-transactions.use-case.js";
 import { describe, expect, it, vi } from "vitest";
 
 const job: JobRecord = {
@@ -60,6 +62,34 @@ describe("worker use cases", () => {
     expect(repository.complete).not.toHaveBeenCalled();
   });
 
+  it("records the application error code for actionable job diagnostics", async () => {
+    const repository = {
+      claim: vi.fn(() => Promise.resolve(job)),
+      complete: vi.fn(() => Promise.resolve()),
+      fail: vi.fn(() => Promise.resolve()),
+    } satisfies IJobRepository;
+    const handler = {
+      name: "example",
+      execute: vi.fn(() =>
+        Promise.reject(
+          new ApplicationError("Closed statement", {
+            category: "conflict",
+            code: "RECURRENCE_STATEMENT_IMMUTABLE",
+          }),
+        ),
+      ),
+    } satisfies IJobHandler;
+
+    await expect(new ProcessNextJobUseCase(repository, [handler]).execute()).rejects.toThrow(
+      "Closed statement",
+    );
+    expect(repository.fail).toHaveBeenCalledWith(
+      job.id,
+      job.attempts,
+      "RECURRENCE_STATEMENT_IMMUTABLE",
+    );
+  });
+
   it("schedules maintenance through the tenant unit of work", async () => {
     const schedule = vi.fn<(jobs: readonly ScheduledJob[]) => Promise<void>>(() =>
       Promise.resolve(),
@@ -73,6 +103,9 @@ describe("worker use cases", () => {
           planning: {
             listActiveRuleIds: () => Promise.resolve([crypto.randomUUID()]),
           } as unknown as WorkerScope["planning"],
+          transactions: {
+            settleOverdue: vi.fn(() => Promise.resolve({ confirmed: 0, settled: 0 })),
+          },
           scheduledJobs: { schedule },
         }),
     };
@@ -86,10 +119,36 @@ describe("worker use cases", () => {
     await useCase.execute();
 
     expect(schedule).toHaveBeenCalledOnce();
-    expect(schedule.mock.calls[0]?.[0]).toHaveLength(4);
+    expect(schedule.mock.calls[0]?.[0]).toHaveLength(5);
     expect(schedule.mock.calls[0]?.[0]).toEqual(
-      expect.arrayContaining([expect.objectContaining({ name: "clean-expired-import-files" })]),
+      expect.arrayContaining([
+        expect.objectContaining({ name: "clean-expired-import-files" }),
+        expect.objectContaining({
+          name: "settle-overdue-transactions",
+          payload: { referenceOn: "2026-11-02" },
+        }),
+      ]),
     );
+  });
+
+  it("settles overdue transactions using the workspace civil date", async () => {
+    const settleOverdue = vi.fn(() => Promise.resolve({ confirmed: 2, settled: 3 }));
+    const unitOfWork: IWorkerUnitOfWork = {
+      run: <T>(_workspaceId: bigint, work: (scope: WorkerScope) => Promise<T>) =>
+        work({
+          planning: {} as WorkerScope["planning"],
+          transactions: { settleOverdue },
+          scheduledJobs: { schedule: vi.fn() },
+        }),
+    };
+
+    await new SettleOverdueTransactionsUseCase(unitOfWork).execute({
+      ...job,
+      name: "settle-overdue-transactions",
+      payload: { referenceOn: "2026-11-02" },
+    });
+
+    expect(settleOverdue).toHaveBeenCalledWith("2026-11-02");
   });
 
   it("removes expired import files and marks their storage keys as collected", async () => {
@@ -103,6 +162,9 @@ describe("worker use cases", () => {
               Promise.resolve([{ id: 9n, storageKey: "workspace/import-file" }]),
             markImportFileRemoved,
           } as unknown as WorkerScope["planning"],
+          transactions: {
+            settleOverdue: vi.fn(() => Promise.resolve({ confirmed: 0, settled: 0 })),
+          },
           scheduledJobs: { schedule: vi.fn() },
         }),
     };

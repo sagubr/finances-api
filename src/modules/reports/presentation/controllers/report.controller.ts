@@ -7,6 +7,7 @@ import type { GetAnnualReportUseCase } from "#/modules/reports/application/use-c
 import type { GetCashflowForecastUseCase } from "#/modules/reports/application/use-cases/get-cashflow-forecast.use-case.js";
 import type { GetCategorySpendingUseCase } from "#/modules/reports/application/use-cases/get-category-spending.use-case.js";
 import type { GetExportUseCase } from "#/modules/reports/application/use-cases/get-export.use-case.js";
+import type { GetMonthlyCalendarUseCase } from "#/modules/reports/application/use-cases/get-monthly-calendar.use-case.js";
 import type {
   AnnualReportQuery,
   CashflowRange,
@@ -15,6 +16,7 @@ import type {
   DownloadExportInput,
   ExportIdParams,
   ExportInput,
+  MonthlyCalendarQuery,
 } from "#/modules/reports/dtos/report.dto.js";
 import { response } from "#/shared/http/response.js";
 import type { FastifyReply, FastifyRequest } from "fastify";
@@ -46,6 +48,17 @@ export class GetCashflowForecastController {
 export class GetCategorySpendingController {
   constructor(private readonly useCase: GetCategorySpendingUseCase) {}
   async handle(request: FastifyRequest<{ Querystring: CategorySpendingQuery }>) {
+    return response(
+      await this.useCase.execute(
+        requireRequestContext(request.requestContext),
+        request.query.month,
+      ),
+    );
+  }
+}
+export class GetMonthlyCalendarController {
+  constructor(private readonly useCase: GetMonthlyCalendarUseCase) {}
+  async handle(request: FastifyRequest<{ Querystring: MonthlyCalendarQuery }>) {
     return response(
       await this.useCase.execute(
         requireRequestContext(request.requestContext),

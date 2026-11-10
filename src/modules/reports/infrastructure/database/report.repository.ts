@@ -271,6 +271,61 @@ export class ReportRepository implements IReportRepository {
     };
   }
 
+  async monthlyCalendar(month: string, calculatedAt: string) {
+    const rows = await this.database
+      .select({
+        date: transactions.occurredOn,
+        realizedExpenseCents: sql<bigint>`coalesce(sum(case when ${transactions.status} <> 'PLANNED' then ${transactions.amountCents} else 0 end), 0)`,
+        plannedExpenseCents: sql<bigint>`coalesce(sum(case when ${transactions.status} = 'PLANNED' then ${transactions.amountCents} else 0 end), 0)`,
+        realizedCount: sql<bigint>`count(*) filter (where ${transactions.status} <> 'PLANNED')`,
+        plannedCount: sql<bigint>`count(*) filter (where ${transactions.status} = 'PLANNED')`,
+      })
+      .from(transactions)
+      .innerJoin(accounts, eq(accounts.id, transactions.accountId))
+      .innerJoin(workspaces, eq(workspaces.id, accounts.workspaceId))
+      .innerJoin(categories, eq(categories.id, transactions.categoryId))
+      .where(
+        and(
+          eq(transactions.workspaceId, this.context.workspaceId),
+          eq(transactions.currency, workspaces.baseCurrency),
+          // Keep the same consumption semantics as category spending. In
+          // PAYMENT_ONLY mode card purchases are persisted as CARD_PAYMENT.
+          inArray(transactions.type, ["EXPENSE", "CARD_PAYMENT"]),
+          eq(transactions.competenceMonth, month),
+          isNull(transactions.deletedAt),
+        ),
+      )
+      .groupBy(transactions.occurredOn)
+      .orderBy(asc(transactions.occurredOn));
+    const items = rows.map((row) => ({
+      date: row.date,
+      realizedExpenseCents: safeMoney(row.realizedExpenseCents),
+      plannedExpenseCents: safeMoney(row.plannedExpenseCents),
+      realizedCount: safeMoney(row.realizedCount),
+      plannedCount: safeMoney(row.plannedCount),
+    }));
+    return {
+      month,
+      items,
+      totals: items.reduce(
+        (total, item) => ({
+          realizedExpenseCents: total.realizedExpenseCents + item.realizedExpenseCents,
+          plannedExpenseCents: total.plannedExpenseCents + item.plannedExpenseCents,
+          realizedCount: total.realizedCount + item.realizedCount,
+          plannedCount: total.plannedCount + item.plannedCount,
+        }),
+        {
+          realizedExpenseCents: 0,
+          plannedExpenseCents: 0,
+          realizedCount: 0,
+          plannedCount: 0,
+        },
+      ),
+      calculatedAt,
+      dataVersion: 1,
+    };
+  }
+
   async createExport(publicId: string, jobId: string, input: ExportInput): Promise<void> {
     await this.database.insert(exports).values({
       publicId,

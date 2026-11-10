@@ -36,6 +36,10 @@ export interface ICardRepository {
     statementId: string,
     expectedVersion: number,
   ): Promise<Readonly<{ id: string; status: "CLOSED"; totalCents: number; version: number }>>;
+  reopenStatement(
+    statementId: string,
+    expectedVersion: number,
+  ): Promise<Readonly<{ id: string; status: "OPEN"; totalCents: number; version: number }>>;
   payStatement(
     statementId: string,
     ids: Readonly<{ payment: string; transaction: string }>,

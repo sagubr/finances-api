@@ -2,9 +2,11 @@ import { authConfig } from "#/config/auth.config.js";
 import { serverConfig } from "#/config/server.config.js";
 import { db } from "#/infrastructure/database/db.provider.js";
 import { AesGcmContentCipher } from "#/infrastructure/security/content-cipher.js";
+import { GoogleOAuthClient } from "#/modules/platform/application/google-oauth.client.js";
 import { IdentityEmailService } from "#/modules/platform/application/identity-email.service.js";
 import { SessionResolver } from "#/modules/platform/application/session-resolver.js";
 import { AuthenticateUserUseCase } from "#/modules/platform/application/use-cases/authenticate-user.use-case.js";
+import { AuthenticateWithGoogleUseCase } from "#/modules/platform/application/use-cases/authenticate-with-google.use-case.js";
 import { ChangePasswordUseCase } from "#/modules/platform/application/use-cases/change-password.use-case.js";
 import { ConfirmEmailUseCase } from "#/modules/platform/application/use-cases/confirm-email.use-case.js";
 import { RegisterUserUseCase } from "#/modules/platform/application/use-cases/register-user.use-case.js";
@@ -15,6 +17,7 @@ import { IdentityRepository } from "#/modules/platform/infrastructure/database/i
 import {
   ChangePasswordController,
   ConfirmEmailController,
+  GoogleAuthenticationController,
   LoginController,
   RegisterController,
   RequestPasswordResetController,
@@ -42,8 +45,33 @@ const emailService = new IdentityEmailService(
   encryptToken,
   () => new Date(),
 );
+const googleClient =
+  authConfig.googleClientId && authConfig.googleClientSecret
+    ? new GoogleOAuthClient(
+        authConfig.googleClientId,
+        authConfig.googleClientSecret,
+        authConfig.googleRedirectUri,
+      )
+    : null;
+const googleUseCase = googleClient
+  ? new AuthenticateWithGoogleUseCase(
+      repository,
+      googleClient,
+      hash,
+      () => randomBytes(32).toString("base64url"),
+      uuidv7,
+      () => new Date(),
+    )
+  : null;
 
 export const authenticationControllers = {
+  google: new GoogleAuthenticationController(
+    googleClient,
+    googleUseCase,
+    new URL(authConfig.googleRedirectUri).pathname,
+    authConfig.webAppUrl,
+    serverConfig.environment === "production",
+  ),
   register: new RegisterController(
     new RegisterUserUseCase(
       repository,
