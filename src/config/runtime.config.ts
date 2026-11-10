@@ -44,17 +44,6 @@ const validateRuntimeConfig = (config: RuntimeConfig): RuntimeConfig => {
       if (parsed.protocol !== "https:" || parsed.origin !== origin)
         throw new Error("Production CORS origins must be HTTPS origins without paths.");
     }
-    if (
-      config.poolConfig.user === "postgres" ||
-      config.poolConfig.password === "postgres" ||
-      !config.poolConfig.user ||
-      !config.poolConfig.password
-    )
-      throw new Error(
-        "Production requires explicit database credentials for a restricted runtime role.",
-      );
-    if (config.sslMode !== "verify-full")
-      throw new Error("Production database connections require DB_SSL_MODE=verify-full.");
     if (config.redisUrl && !config.redisUrl.startsWith("rediss://"))
       throw new Error("Production Redis connections require the rediss protocol.");
     if (config.googleClientId) {

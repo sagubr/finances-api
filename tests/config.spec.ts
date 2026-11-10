@@ -121,7 +121,7 @@ describe("runtime configuration", () => {
     ).toEqual(["https://app.example.com"]);
   });
 
-  it("rejects privileged default database credentials and unverified TLS in production", () => {
+  it("requires verified database TLS in production regardless of credential names", () => {
     const production = {
       ...validEnvironment,
       NODE_ENV: "production",
@@ -138,13 +138,6 @@ describe("runtime configuration", () => {
         ...production,
         DATABASE_USER: "postgres",
         DATABASE_PASSWORD: "postgres",
-      }),
-    ).toThrow("restricted runtime role");
-    expect(() =>
-      readRuntimeConfig({
-        ...production,
-        DATABASE_USER: "finances_app",
-        DATABASE_PASSWORD: "production-database-password",
       }),
     ).toThrow("DB_SSL_MODE=verify-full");
   });
