@@ -19,7 +19,7 @@ dois pelo ecosystem do projeto:
 
 ```bash
 npm run build
-pm2 start ecosystem.config.cjs
+pm2 start ecosystem.config.cjs --env production
 pm2 save
 ```
 
@@ -29,12 +29,27 @@ Para acompanhar o processamento das recorrências e demais jobs:
 pm2 logs finances-api-worker --lines 200
 ```
 
-Os logs persistentes ficam em `logs/api.*.log` e `logs/worker.*.log`. Depois de alterar código ou
-variáveis de ambiente, gere um novo build e reinicie os processos:
+Os logs ficam no diretório padrão do PM2 e podem ser consultados com `pm2 logs`. Depois de alterar
+código ou variáveis de ambiente, gere um novo build e reinicie os processos:
 
 ```bash
 npm run build
-pm2 restart ecosystem.config.cjs --update-env
+pm2 restart ecosystem.config.cjs --env production --update-env
+```
+
+O `ecosystem.config.cjs` usa `/api` como diretório de trabalho, portanto o `dotenv` da aplicação
+carrega `/api/.env`. O PM2 define apenas `NODE_ENV=production` e `LOG_LEVEL=info` quando iniciado
+com `--env production`; as demais configurações continuam vindo do `.env` ou do secret manager.
+
+Em uma máquina com 1 GB de RAM, a API reinicia ao ultrapassar 256 MB e o worker ao ultrapassar
+224 MB. Use `DB_POOL_MAX=4` no ambiente de produção para limitar cada pool de conexões. Os limites
+evitam que os dois processos consumam toda a memória disponível, mas importações muito grandes
+podem exigir uma máquina maior.
+
+Confira o ambiente efetivamente recebido pelo processo depois do deploy:
+
+```bash
+pm2 env 0 | grep -E 'NODE_ENV|DATABASE_HOST|DATABASE_NAME|DATABASE_USER|DB_SSL_MODE'
 ```
 
 O servidor usa a porta `3005` por padrão. Comandos Drizzle exigem que a configuração de conexão seja injetada pelo ambiente ou secret manager.

@@ -1,28 +1,26 @@
-const path = require("node:path");
-
-const apiRoot = __dirname;
-const logsDirectory = path.join(apiRoot, "logs");
 const applicationName = process.env.PM2_APP_NAME || "finances-api";
 
 const baseProcess = {
-  cwd: apiRoot,
+  cwd: __dirname,
   interpreter: "node",
-  node_args: "--enable-source-maps",
   exec_mode: "fork",
   instances: 1,
   autorestart: true,
   watch: false,
   source_map_support: true,
-  max_memory_restart: "1G",
-  restart_delay: 2_000,
-  exp_backoff_restart_delay: 100,
-  kill_timeout: 15_000,
-  max_restarts: 10,
-  min_uptime: "10s",
-  merge_logs: false,
+  restart_delay: 5_000,
+  exp_backoff_restart_delay: 1_000,
+  kill_timeout: 10_000,
+  max_restarts: 5,
+  min_uptime: "15s",
+  merge_logs: true,
   env: {
-    NODE_ENV: process.env.NODE_ENV || "development",
-    LOG_LEVEL: process.env.LOG_LEVEL || "info",
+    NODE_ENV: "development",
+    LOG_LEVEL: "info",
+  },
+  env_production: {
+    NODE_ENV: "production",
+    LOG_LEVEL: "info",
   },
 };
 
@@ -32,15 +30,15 @@ module.exports = {
       ...baseProcess,
       name: applicationName,
       script: "dist/server.js",
-      out_file: path.join(logsDirectory, "api.out.log"),
-      error_file: path.join(logsDirectory, "api.error.log"),
+      node_args: "--enable-source-maps --max-old-space-size=192",
+      max_memory_restart: "256M",
     },
     {
       ...baseProcess,
       name: `${applicationName}-worker`,
       script: "dist/worker/main.js",
-      out_file: path.join(logsDirectory, "worker.out.log"),
-      error_file: path.join(logsDirectory, "worker.error.log"),
+      node_args: "--enable-source-maps --max-old-space-size=160",
+      max_memory_restart: "224M",
     },
   ],
 };
