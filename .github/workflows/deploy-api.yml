@@ -98,6 +98,19 @@ jobs:
           script_stop: true
           script: |
             set -eu
+            export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
+            if [ -s "$NVM_DIR/nvm.sh" ]; then
+              . "$NVM_DIR/nvm.sh"
+              nvm use --silent default >/dev/null 2>&1 || true
+            fi
+            command -v npm >/dev/null 2>&1 || {
+              echo "npm not found on the VPS. Install Node.js/npm for $VPS_USERNAME or configure NVM." >&2
+              exit 127
+            }
+            command -v pm2 >/dev/null 2>&1 || {
+              echo "pm2 not found on the VPS. Run: npm install --global pm2" >&2
+              exit 127
+            }
             mkdir -p "$VPS_API_PATH"
             tar -xzf "$RELEASE_FILE" -C "$VPS_API_PATH"
             rm -f "$RELEASE_FILE"

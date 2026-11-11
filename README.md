@@ -29,6 +29,10 @@ Configure os demais valores como **Variables** com o prefixo `API_` usado direta
 workflow. `VPS_SSH_PORT` e `VPS_API_PATH` são opcionais e assumem, respectivamente, `22` e
 `/opt/nummo/api`.
 
+O usuário SSH precisa ter Node.js/npm e PM2 disponíveis em um shell não interativo. Se Node.js
+for instalado via NVM, o workflow carrega o NVM padrão do usuário; caso contrário, instale PM2
+com `npm install --global pm2` e confirme com `ssh USUARIO@HOST 'command -v npm; command -v pm2'`.
+
 ## Processos com PM2
 
 O servidor HTTP e o worker devem rodar como processos separados. Após gerar o build, inicie os
