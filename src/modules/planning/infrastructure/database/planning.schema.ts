@@ -52,6 +52,14 @@ export const statementStatus = pgEnum("statement_status", [
   "PAID",
 ]);
 export const cardAccountingMode = pgEnum("card_accounting_mode", ["DETAILED", "PAYMENT_ONLY"]);
+export const creditCardBrand = pgEnum("credit_card_brand", [
+  "VISA",
+  "MASTERCARD",
+  "ELO",
+  "AMEX",
+  "HIPERCARD",
+  "OTHER",
+]);
 
 export const importBatches = pgTable(
   "import_batches",
@@ -247,6 +255,7 @@ export const creditCards = pgTable(
       .notNull()
       .references(() => workspaces.id),
     name: varchar("name", { length: 120 }).notNull(),
+    brand: creditCardBrand("brand"),
     lastFour: varchar("last_four", { length: 4 }),
     currency: varchar("currency", { length: 3 }).notNull(),
     limitCents: bigint("limit_cents", { mode: "bigint" }).notNull(),

@@ -279,14 +279,153 @@ export class InstallmentRepository implements IInstallmentRepository {
         .limit(1)
     )[0];
     if (!plan) this.versionConflict();
-    if (plan.creditCardId)
-      throw new ApplicationError(
-        "Parcelamentos do cartão devem ser ajustados pelas compras das faturas.",
-        {
-          category: "conflict",
-          code: "CARD_INSTALLMENT_IMMUTABLE",
-        },
-      );
+    if (plan.creditCardId) {
+      const card = (
+        await this.database
+          .select()
+          .from(creditCards)
+          .where(
+            and(
+              eq(creditCards.workspaceId, this.context.workspaceId),
+              eq(creditCards.id, plan.creditCardId),
+              eq(creditCards.paymentAccountId, relations.accountId),
+              eq(creditCards.currency, input.currency),
+              eq(creditCards.active, true),
+            ),
+          )
+          .limit(1)
+          .for("share")
+      )[0];
+      if (!card || !relations.categoryId)
+        throw new ApplicationError("Cartão, conta de pagamento ou categoria incompatível.", {
+          category: "validation",
+          code: "INSTALLMENT_CARD_RELATION_INVALID",
+        });
+
+      const generated = await this.database
+        .select({ transaction: transactions, statement: cardStatements })
+        .from(transactions)
+        .innerJoin(statementCycles, eq(statementCycles.transactionId, transactions.id))
+        .innerJoin(cardStatements, eq(cardStatements.id, statementCycles.statementId))
+        .where(
+          and(
+            eq(transactions.workspaceId, this.context.workspaceId),
+            inArray(transactions.sourceModule, cardInstallmentSources),
+            eq(transactions.sourcePublicId, planId),
+            isNull(transactions.deletedAt),
+          ),
+        )
+        .orderBy(asc(transactions.sourceSequence));
+      if (
+        generated.length !== plan.installments ||
+        generated.some(({ statement }) => statement.status !== "OPEN" || statement.paidCents !== 0n)
+      )
+        throw new ApplicationError(
+          "Parcelamentos com faturas fechadas ou pagas não podem ser editados.",
+          { category: "conflict", code: "INSTALLMENT_IMMUTABLE" },
+        );
+
+      const amounts = splitInstallments(BigInt(input.totalAmountCents), plan.installments);
+      const preferredDay = Number(input.firstDueOn.slice(8, 10));
+      const statementDeltas = new Map<
+        bigint,
+        { statement: typeof cardStatements.$inferSelect; delta: bigint }
+      >();
+      const addDelta = (statement: typeof cardStatements.$inferSelect, delta: bigint) => {
+        const current = statementDeltas.get(statement.id);
+        statementDeltas.set(statement.id, {
+          statement,
+          delta: (current?.delta ?? 0n) + delta,
+        });
+      };
+
+      for (const [index, entry] of generated.entries()) {
+        const amount = amounts[index];
+        if (amount === undefined) throw new Error("Installment amount is missing.");
+        const occurredOn = addCalendarMonths(input.firstDueOn, index, preferredDay);
+        const targetStatement = await materializeOpenCardStatement(this.database, {
+          workspaceId: this.context.workspaceId,
+          card,
+          occurredOn,
+          generateId: this.generateId,
+        });
+        await this.database
+          .update(transactions)
+          .set({
+            accountId: relations.accountId,
+            categoryId: relations.categoryId,
+            amountCents: amount,
+            currency: input.currency,
+            description: `${input.description} (${index + 1}/${plan.installments})`,
+            occurredOn,
+            competenceMonth: occurredOn.slice(0, 7),
+            status: "CONFIRMED",
+            version: sql`${transactions.version} + 1`,
+            updatedAt: new Date(),
+            updatedBy: this.context.userId,
+          })
+          .where(eq(transactions.id, entry.transaction.id));
+        if (targetStatement.id !== entry.statement.id) {
+          await this.database
+            .update(statementCycles)
+            .set({ statementId: targetStatement.id })
+            .where(eq(statementCycles.transactionId, entry.transaction.id));
+        }
+        addDelta(entry.statement, -entry.transaction.amountCents);
+        addDelta(targetStatement, amount);
+      }
+
+      for (const { statement, delta } of statementDeltas.values()) {
+        const updated = (
+          await this.database
+            .update(cardStatements)
+            .set({
+              totalCents: sql`${cardStatements.totalCents} + ${delta}`,
+              version: sql`${cardStatements.version} + 1`,
+              updatedAt: new Date(),
+            })
+            .where(eq(cardStatements.id, statement.id))
+            .returning({ totalCents: cardStatements.totalCents })
+        )[0];
+        if (!updated || updated.totalCents < 0n)
+          throw new Error("Card installment statement total became invalid.");
+        await this.projection.sync({
+          statementId: statement.publicId,
+          accountId: relations.accountId,
+          cardName: card.name,
+          currency: card.currency,
+          dueOn: statement.dueOn,
+          totalCents: updated.totalCents,
+          paidCents: statement.paidCents,
+        });
+      }
+
+      const rows = await this.database
+        .update(installmentPlans)
+        .set({
+          description: input.description,
+          totalAmountCents: BigInt(input.totalAmountCents),
+          firstDueOn: input.firstDueOn,
+          currency: input.currency,
+          version: sql`${installmentPlans.version} + 1`,
+          updatedAt: new Date(),
+        })
+        .where(eq(installmentPlans.id, plan.id))
+        .returning({ version: installmentPlans.version });
+      return {
+        id: planId,
+        accountId: input.accountId,
+        creditCardId: card.publicId,
+        creditCardName: card.name,
+        categoryId: input.categoryId ?? null,
+        description: input.description,
+        totalAmountCents: input.totalAmountCents,
+        installments: plan.installments,
+        firstDueOn: input.firstDueOn,
+        currency: input.currency,
+        version: rows[0]?.version ?? plan.version + 1,
+      };
+    }
     const generated = await this.database
       .select({
         id: transactions.id,

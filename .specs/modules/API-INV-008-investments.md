@@ -10,13 +10,13 @@ Registrar ordens e renda fixa, reconstruir posições, controlar proventos, aloc
 
 ## Modelo
 
-`accounts` é a única fonte de identidade, nome, moeda, saldo e ciclo de vida das contas. Investimentos aceitam exclusivamente contas com `type = BROKERAGE`; não existe cadastro paralelo de conta no módulo patrimonial. `investment_orders` e `position_projections` referenciam diretamente `accounts`. Os demais agregados são `realized_results`, `dividends`, `fixed_income_holdings`, `allocation_plans`, `allocation_targets` e `growth_plans`. Ordens são fonte da verdade; posições são derivadas e versionadas.
+`accounts` é a única fonte de identidade, nome, tipo, moeda, saldo e ciclo de vida das contas. Investimentos podem usar qualquer conta ativa; não existe cadastro ou listagem paralela de conta no módulo patrimonial. `investment_orders` e `position_projections` referenciam diretamente `accounts`. Os demais agregados são `realized_results`, `dividends`, `fixed_income_holdings`, `allocation_plans`, `allocation_targets` e `growth_plans`. Ordens são fonte da verdade; posições são derivadas e versionadas.
 
 ## Invariantes
 
 - quantidade, preço e taxas usam decimal exato com escala definida;
-- uma conta de investimento é uma `account` do tipo `BROKERAGE`, criada e mantida pelo módulo TX;
-- ordens e posições só podem usar conta `BROKERAGE` ativa do mesmo workspace e na mesma moeda do instrumento;
+- contas são criadas e mantidas pelo módulo TX, sem categoria exclusiva para investimentos;
+- ordens e posições podem usar qualquer conta ativa do mesmo workspace e na mesma moeda do instrumento;
 - preço médio é ponderado por compras; venda não muda custo unitário remanescente;
 - venda acima da posição é recusada na V1;
 - lucro realizado inclui taxas conforme alocação definida;
@@ -29,7 +29,7 @@ Registrar ordens e renda fixa, reconstruir posições, controlar proventos, aloc
 
 ## HTTP
 
-CRUD/comandos em `/investments/orders`, `/dividends`, `/fixed-income`, `/allocation-plans`, `/growth-plans`; leitura `/investments/positions`, `/investments/allocation`, `/investments/rebalance-suggestion`, `/growth-plans/{id}/projection`.
+CRUD/comandos em `/investments/orders`, `/dividends`, `/fixed-income`, `/allocation-plans`, `/growth-plans`; leitura `/investments/positions`, `/investments/allocation`, `/investments/rebalance-suggestion`, `/growth-plans/{id}/projection`. Contas são consultadas exclusivamente pelo recurso geral `/accounts`; não existe `/investments/accounts`.
 
 ## Eventos e reconciliação
 

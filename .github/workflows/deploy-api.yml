@@ -1,0 +1,113 @@
+name: Deploy API
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "api/**"
+      - ".github/workflows/deploy-api.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-api
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: api
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: api/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build API
+        run: npm run build
+
+      - name: Create production environment file
+        uses: SpicyPizza/create-envfile@v2.0
+        with:
+          envkey_NODE_ENV: production
+          envkey_HOST: ${{ vars.API_HOST }}
+          envkey_PORT: ${{ vars.API_PORT }}
+          envkey_LOG_LEVEL: ${{ vars.API_LOG_LEVEL }}
+          envkey_DATABASE_HOST: ${{ vars.API_DATABASE_HOST }}
+          envkey_DATABASE_PORT: ${{ vars.API_DATABASE_PORT }}
+          envkey_DATABASE_NAME: ${{ vars.API_DATABASE_NAME }}
+          envkey_DATABASE_USER: ${{ vars.API_DATABASE_USER }}
+          envkey_DATABASE_PASSWORD: ${{ secrets.API_DATABASE_PASSWORD }}
+          envkey_DB_SSL_MODE: ${{ vars.API_DB_SSL_MODE }}
+          envkey_DB_POOL_MAX: ${{ vars.API_DB_POOL_MAX }}
+          envkey_DB_IDLE_TIMEOUT_MS: ${{ vars.API_DB_IDLE_TIMEOUT_MS }}
+          envkey_DB_CONNECTION_TIMEOUT_MS: ${{ vars.API_DB_CONNECTION_TIMEOUT_MS }}
+          envkey_COOKIE_SECRET: ${{ secrets.API_COOKIE_SECRET }}
+          envkey_TOKEN_ENCRYPTION_KEY: ${{ secrets.API_TOKEN_ENCRYPTION_KEY }}
+          envkey_AUTH_AUTO_CONFIRM_EMAIL: ${{ vars.API_AUTH_AUTO_CONFIRM_EMAIL }}
+          envkey_GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.API_GOOGLE_OAUTH_CLIENT_ID }}
+          envkey_GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.API_GOOGLE_OAUTH_CLIENT_SECRET }}
+          envkey_GOOGLE_OAUTH_REDIRECT_URI: ${{ vars.API_GOOGLE_OAUTH_REDIRECT_URI }}
+          envkey_WEB_APP_URL: ${{ vars.API_WEB_APP_URL }}
+          envkey_RESEND_API_KEY: ${{ secrets.API_RESEND_API_KEY }}
+          envkey_BRAPI_API_KEY: ${{ secrets.API_BRAPI_API_KEY }}
+          envkey_BRAPI_BASE_URL: ${{ vars.API_BRAPI_BASE_URL }}
+          envkey_BRAPI_TIMEOUT_MS: ${{ vars.API_BRAPI_TIMEOUT_MS }}
+          envkey_BRAPI_MIN_REQUEST_INTERVAL_MS: ${{ vars.API_BRAPI_MIN_REQUEST_INTERVAL_MS }}
+          envkey_MARKET_QUOTE_CACHE_MINUTES: ${{ vars.API_MARKET_QUOTE_CACHE_MINUTES }}
+          envkey_MARKET_QUOTE_REFRESH_MINUTES: ${{ vars.API_MARKET_QUOTE_REFRESH_MINUTES }}
+          envkey_EMAIL_FROM: ${{ vars.API_EMAIL_FROM }}
+          envkey_EMAIL_REPLY_TO: ${{ vars.API_EMAIL_REPLY_TO }}
+          envkey_REDIS_URL: ${{ secrets.API_REDIS_URL }}
+          envkey_IMPORT_STORAGE_DIR: ${{ vars.API_IMPORT_STORAGE_DIR }}
+          envkey_EXPORT_STORAGE_DIR: ${{ vars.API_EXPORT_STORAGE_DIR }}
+          envkey_CORS_ALLOWED_ORIGINS: ${{ vars.API_CORS_ALLOWED_ORIGINS }}
+          file_name: .env
+          directory: api
+          fail_on_empty: false
+          sort_keys: false
+
+      - name: Package release
+        run: tar -czf ../api-release.tar.gz dist package.json package-lock.json ecosystem.config.cjs .env
+
+      - name: Upload release
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USERNAME }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: ${{ vars.VPS_SSH_PORT || 22 }}
+          source: api-release.tar.gz
+          target: /tmp
+
+      - name: Install and restart API
+        uses: appleboy/ssh-action@v1.2.2
+        env:
+          VPS_API_PATH: ${{ vars.VPS_API_PATH || '/opt/nummo/api' }}
+          RELEASE_FILE: /tmp/api-release.tar.gz
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USERNAME }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: ${{ vars.VPS_SSH_PORT || 22 }}
+          envs: VPS_API_PATH,RELEASE_FILE
+          script_stop: true
+          script: |
+            set -eu
+            mkdir -p "$VPS_API_PATH"
+            tar -xzf "$RELEASE_FILE" -C "$VPS_API_PATH"
+            rm -f "$RELEASE_FILE"
+            cd "$VPS_API_PATH"
+            npm ci --omit=dev
+            pm2 startOrRestart ecosystem.config.cjs --env production --update-env
+            pm2 save

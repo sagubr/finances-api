@@ -84,6 +84,32 @@ export const instrumentProviderMappings = pgTable(
   ],
 );
 
+export const marketDataFetches = pgTable(
+  "market_data_fetches",
+  {
+    id: identity(),
+    publicId: publicId(),
+    provider: varchar("provider", { length: 80 }).notNull(),
+    endpoint: varchar("endpoint", { length: 200 }).notNull(),
+    requestedSymbols: jsonb("requested_symbols").notNull(),
+    responsePayload: jsonb("response_payload").notNull(),
+    responseHash: varchar("response_hash", { length: 64 }).notNull(),
+    httpStatus: integer("http_status").notNull(),
+    requestedAt: timestamp("requested_at", { withTimezone: true }).notNull(),
+    receivedAt: timestamp("received_at", { withTimezone: true }).notNull(),
+  },
+  (table) => [
+    index("market_data_fetches_provider_received_idx").on(table.provider, table.receivedAt),
+  ],
+);
+
+export const marketProviderRateLimits = pgTable("market_provider_rate_limits", {
+  id: identity(),
+  provider: varchar("provider", { length: 80 }).notNull().unique(),
+  nextAllowedAt: timestamp("next_allowed_at", { withTimezone: true }).notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 export const quotes = pgTable(
   "quotes",
   {
@@ -91,14 +117,26 @@ export const quotes = pgTable(
     instrumentId: bigint("instrument_id", { mode: "bigint" })
       .notNull()
       .references(() => instruments.id),
+    fetchId: bigint("fetch_id", { mode: "bigint" })
+      .notNull()
+      .references(() => marketDataFetches.id),
     price: numeric("price", { precision: 30, scale: 10 }).notNull(),
+    dayChange: numeric("day_change", { precision: 30, scale: 10 }),
+    dayChangePercent: numeric("day_change_percent", { precision: 18, scale: 8 }),
     currency: varchar("currency", { length: 3 }).notNull(),
     provider: varchar("provider", { length: 80 }).notNull(),
     marketAt: timestamp("market_at", { withTimezone: true }).notNull(),
     ingestedAt: timestamp("ingested_at", { withTimezone: true }).notNull().defaultNow(),
     quality: varchar("quality", { length: 30 }).notNull(),
   },
-  (table) => [index("quotes_instrument_market_idx").on(table.instrumentId, table.marketAt)],
+  (table) => [
+    index("quotes_instrument_market_idx").on(table.instrumentId, table.marketAt),
+    uniqueIndex("quotes_provider_instrument_market_unique").on(
+      table.provider,
+      table.instrumentId,
+      table.marketAt,
+    ),
+  ],
 );
 
 export const fxRates = pgTable(

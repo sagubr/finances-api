@@ -70,6 +70,7 @@ export const installmentQuerySchema = cursorPaginationQuerySchema;
 
 export const cardInputSchema = z.object({
   name: z.string().trim().min(1).max(120),
+  brand: z.enum(["VISA", "MASTERCARD", "ELO", "AMEX", "HIPERCARD", "OTHER"]).optional(),
   lastFour: z
     .string()
     .regex(/^\d{4}$/)
@@ -231,6 +232,7 @@ export type InstallmentPlanSummary = z.infer<typeof installmentPlanSummarySchema
 export const creditCardSchema = z.object({
   id: uuidSchema,
   name: z.string(),
+  brand: z.enum(["VISA", "MASTERCARD", "ELO", "AMEX", "HIPERCARD", "OTHER"]).nullable(),
   lastFour: z.string().nullable(),
   paymentAccountId: uuidSchema.nullable(),
   currency: z.string().length(3),

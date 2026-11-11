@@ -29,7 +29,6 @@ import {
   mapAccountComponent,
   mapAsset,
   mapAssetComponent,
-  mapInvestmentAccount,
   mapInvestmentComponent,
   mapPositionProjection,
 } from "#/modules/wealth/mappers/wealth.mapper.js";
@@ -56,37 +55,12 @@ export class WealthRepository implements IWealthRepository {
     return this.marketData.getQuote(id);
   }
 
-  async listInvestmentAccounts(query: Parameters<IWealthRepository["listInvestmentAccounts"]>[0]) {
-    const cursor = decodeCursor(query.cursor);
-    const rows = await this.database
-      .select({
-        id: accounts.publicId,
-        name: accounts.name,
-        currency: accounts.currency,
-        active: accounts.active,
-        version: accounts.version,
-      })
-      .from(accounts)
-      .where(
-        and(
-          eq(accounts.workspaceId, this.context.workspaceId),
-          eq(accounts.type, "BROKERAGE"),
-          eq(accounts.active, true),
-          isNull(accounts.deletedAt),
-          ...(cursor ? [lt(accounts.publicId, cursor)] : []),
-        ),
-      )
-      .orderBy(desc(accounts.publicId))
-      .limit(query.limit + 1);
-    return createCursorPage(rows.map(mapInvestmentAccount), query.limit);
-  }
-
   async listOrders(query: Parameters<IWealthRepository["listOrders"]>[0]) {
     const cursor = decodeCursor(query.cursor);
     const rows = await this.database
       .select({
         id: investmentOrders.publicId,
-        investmentAccountId: accounts.publicId,
+        accountId: accounts.publicId,
         instrumentId: instruments.publicId,
         symbol: instruments.symbol,
         side: investmentOrders.side,
@@ -117,13 +91,63 @@ export class WealthRepository implements IWealthRepository {
     const rows = await this.database
       .select({
         cursorId: positionProjections.id,
-        investmentAccountId: accounts.publicId,
+        accountId: accounts.publicId,
         instrumentId: instruments.publicId,
+        orderId: sql<string | null>`(
+          select latest_order.public_id from ${investmentOrders} latest_order
+          where latest_order.investment_account_id = ${positionProjections.investmentAccountId}
+            and latest_order.instrument_id = ${positionProjections.instrumentId}
+            and latest_order.workspace_id = ${positionProjections.workspaceId}
+            and latest_order.deleted_at is null
+          order by latest_order.traded_on desc, latest_order.id desc limit 1
+        )`,
+        orderVersion: sql<number | null>`(
+          select latest_order.version from ${investmentOrders} latest_order
+          where latest_order.investment_account_id = ${positionProjections.investmentAccountId}
+            and latest_order.instrument_id = ${positionProjections.instrumentId}
+            and latest_order.workspace_id = ${positionProjections.workspaceId}
+            and latest_order.deleted_at is null
+          order by latest_order.traded_on desc, latest_order.id desc limit 1
+        )`,
+        orderQuantity: sql<string | null>`(
+          select latest_order.quantity from ${investmentOrders} latest_order
+          where latest_order.investment_account_id = ${positionProjections.investmentAccountId}
+            and latest_order.instrument_id = ${positionProjections.instrumentId}
+            and latest_order.workspace_id = ${positionProjections.workspaceId}
+            and latest_order.deleted_at is null
+          order by latest_order.traded_on desc, latest_order.id desc limit 1
+        )`,
+        orderUnitPrice: sql<string | null>`(
+          select latest_order.unit_price from ${investmentOrders} latest_order
+          where latest_order.investment_account_id = ${positionProjections.investmentAccountId}
+            and latest_order.instrument_id = ${positionProjections.instrumentId}
+            and latest_order.workspace_id = ${positionProjections.workspaceId}
+            and latest_order.deleted_at is null
+          order by latest_order.traded_on desc, latest_order.id desc limit 1
+        )`,
+        orderFees: sql<string | null>`(
+          select latest_order.fees from ${investmentOrders} latest_order
+          where latest_order.investment_account_id = ${positionProjections.investmentAccountId}
+            and latest_order.instrument_id = ${positionProjections.instrumentId}
+            and latest_order.workspace_id = ${positionProjections.workspaceId}
+            and latest_order.deleted_at is null
+          order by latest_order.traded_on desc, latest_order.id desc limit 1
+        )`,
+        orderTradedOn: sql<string | null>`(
+          select latest_order.traded_on from ${investmentOrders} latest_order
+          where latest_order.investment_account_id = ${positionProjections.investmentAccountId}
+            and latest_order.instrument_id = ${positionProjections.instrumentId}
+            and latest_order.workspace_id = ${positionProjections.workspaceId}
+            and latest_order.deleted_at is null
+          order by latest_order.traded_on desc, latest_order.id desc limit 1
+        )`,
         symbol: instruments.symbol,
         name: instruments.name,
         quantity: positionProjections.quantity,
         averageCost: positionProjections.averageCost,
         totalCost: positionProjections.totalCost,
+        currency: instruments.currency,
+        logoUrl: sql<string | null>`(${instruments.metadata} ->> 'logoUrl')`,
         sourceVersion: positionProjections.sourceVersion,
         calculatedAt: positionProjections.calculatedAt,
         latestPrice: sql<string | null>`(
@@ -133,8 +157,36 @@ export class WealthRepository implements IWealthRepository {
           order by ${quotes.marketAt} desc
           limit 1
         )`,
-        quoteAt: sql<Date | null>`(
+        quoteAt: sql<string | null>`(
           select ${quotes.marketAt}
+          from ${quotes}
+          where ${quotes.instrumentId} = ${positionProjections.instrumentId}
+          order by ${quotes.marketAt} desc
+          limit 1
+        )`,
+        quoteIngestedAt: sql<string | null>`(
+          select ${quotes.ingestedAt}
+          from ${quotes}
+          where ${quotes.instrumentId} = ${positionProjections.instrumentId}
+          order by ${quotes.marketAt} desc
+          limit 1
+        )`,
+        quoteProvider: sql<string | null>`(
+          select ${quotes.provider}
+          from ${quotes}
+          where ${quotes.instrumentId} = ${positionProjections.instrumentId}
+          order by ${quotes.marketAt} desc
+          limit 1
+        )`,
+        dayChange: sql<string | null>`(
+          select ${quotes.dayChange}
+          from ${quotes}
+          where ${quotes.instrumentId} = ${positionProjections.instrumentId}
+          order by ${quotes.marketAt} desc
+          limit 1
+        )`,
+        dayChangePercent: sql<string | null>`(
+          select ${quotes.dayChangePercent}
           from ${quotes}
           where ${quotes.instrumentId} = ${positionProjections.instrumentId}
           order by ${quotes.marketAt} desc
@@ -147,7 +199,6 @@ export class WealthRepository implements IWealthRepository {
       .where(
         and(
           eq(positionProjections.workspaceId, this.context.workspaceId),
-          eq(accounts.type, "BROKERAGE"),
           eq(accounts.active, true),
           isNull(accounts.deletedAt),
           sql`${positionProjections.quantity} <> 0`,
@@ -164,10 +215,7 @@ export class WealthRepository implements IWealthRepository {
   }
 
   async createOrder(id: string, input: OrderInput) {
-    const relation = await this.resolveInvestmentRelation(
-      input.investmentAccountId,
-      input.instrumentId,
-    );
+    const relation = await this.resolveInvestmentRelation(input.accountId, input.instrumentId);
     if (!relation || relation.currency !== input.currency)
       throw new ApplicationError("Conta ou instrumento não encontrado.", {
         category: "validation",
@@ -557,7 +605,6 @@ export class WealthRepository implements IWealthRepository {
       .where(
         and(
           eq(positionProjections.workspaceId, this.context.workspaceId),
-          eq(accounts.type, "BROKERAGE"),
           eq(accounts.active, true),
           isNull(accounts.deletedAt),
           sql`${positionProjections.quantity} <> 0`,
@@ -590,7 +637,6 @@ export class WealthRepository implements IWealthRepository {
           and(
             eq(accounts.workspaceId, this.context.workspaceId),
             eq(accounts.publicId, accountPublicId),
-            eq(accounts.type, "BROKERAGE"),
             eq(accounts.active, true),
             isNull(accounts.deletedAt),
           ),

@@ -7,6 +7,11 @@ import {
 } from "#/config/database.config.js";
 import { createEmailConfig, emailConfig, type EmailConfig } from "#/config/email.config.js";
 import { parseEnvironment, type Environment } from "#/config/env.config.js";
+import {
+  createMarketDataConfig,
+  marketDataConfig,
+  type MarketDataConfig,
+} from "#/config/market-data.config.js";
 import { createQueueConfig, queueConfig, type QueueConfig } from "#/config/queue.config.js";
 import { createServerConfig, serverConfig, type ServerConfig } from "#/config/server.config.js";
 import { createStorageConfig, storageConfig, type StorageConfig } from "#/config/storage.config.js";
@@ -18,7 +23,8 @@ export type RuntimeConfig = Readonly<
     AuthConfig &
     EmailConfig &
     StorageConfig &
-    QueueConfig
+    QueueConfig &
+    MarketDataConfig
 >;
 
 export const createRuntimeConfig = (value: Environment): RuntimeConfig => {
@@ -30,6 +36,7 @@ export const createRuntimeConfig = (value: Environment): RuntimeConfig => {
     ...createEmailConfig(value),
     ...createStorageConfig(value),
     ...createQueueConfig(value),
+    ...createMarketDataConfig(value),
   };
 
   return Object.freeze(config);
@@ -46,4 +53,5 @@ export const runtimeConfig: RuntimeConfig = Object.freeze({
   ...emailConfig,
   ...storageConfig,
   ...queueConfig,
+  ...marketDataConfig,
 });

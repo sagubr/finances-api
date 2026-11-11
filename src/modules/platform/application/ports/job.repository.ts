@@ -9,7 +9,7 @@ export type JobRecord = Readonly<{
 
 export type ScheduledJob = Readonly<{
   publicId: string;
-  workspaceId: bigint;
+  workspaceId: bigint | null;
   name: string;
   executionKey: string;
   payload: unknown;

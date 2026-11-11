@@ -17,7 +17,6 @@ import {
   assetValuationResponseSchema,
   instrumentListResponseSchema,
   instrumentQuerySchema,
-  investmentAccountListResponseSchema,
   netWorthResponseSchema,
   orderInputSchema,
   orderListResponseSchema,
@@ -85,19 +84,6 @@ export const wealthRoutes: FastifyPluginAsyncZod<WealthRoutesOptions> = (app, op
       },
     },
     (request) => wealthControllers.quote.handle(request),
-  );
-  app.get<{ Querystring: WealthListQuery; Headers: WorkspaceHeaders }>(
-    "/investments/accounts",
-    {
-      schema: {
-        operationId: "listInvestmentAccounts",
-        tags: ["Investments"],
-        headers: workspaceHeadersSchema,
-        querystring: wealthListQuerySchema,
-        response: { 200: investmentAccountListResponseSchema, ...errors },
-      },
-    },
-    (request) => wealthControllers.investmentAccounts.handle(request),
   );
   app.get<{ Querystring: WealthListQuery; Headers: WorkspaceHeaders }>(
     "/investments/orders",

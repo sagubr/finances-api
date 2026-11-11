@@ -48,6 +48,7 @@ const mapCard = (
 ): CreditCardView => ({
   id: card.publicId,
   name: card.name,
+  brand: card.brand,
   lastFour: card.lastFour,
   paymentAccountId,
   currency: card.currency,
@@ -131,6 +132,7 @@ export class CardRepository implements ICardRepository {
         publicId,
         workspaceId: this.context.workspaceId,
         name: input.name,
+        brand: input.brand,
         lastFour: input.lastFour,
         currency: input.currency,
         limitCents: BigInt(input.limitCents),
@@ -251,6 +253,7 @@ export class CardRepository implements ICardRepository {
       .update(creditCards)
       .set({
         name: input.name,
+        brand: input.brand ?? null,
         lastFour: input.lastFour ?? null,
         currency: input.currency,
         limitCents: BigInt(input.limitCents),
@@ -889,6 +892,30 @@ export class CardRepository implements ICardRepository {
       .update(cardStatements)
       .set({ paidCents: BigInt(paidCents), status, version, updatedAt: new Date() })
       .where(eq(cardStatements.id, selected.statement.id));
+    if (status === "PAID") {
+      await this.database
+        .update(transactions)
+        .set({
+          status: "SETTLED",
+          settledOn: input.paidOn,
+          version: sql`${transactions.version} + 1`,
+          updatedAt: new Date(),
+          updatedBy: this.context.userId,
+        })
+        .where(
+          and(
+            eq(transactions.workspaceId, this.context.workspaceId),
+            inArray(transactions.status, ["PLANNED", "CONFIRMED"]),
+            isNull(transactions.deletedAt),
+            sql`exists (
+              select 1
+              from ${statementCycles}
+              where ${statementCycles.transactionId} = ${transactions.id}
+                and ${statementCycles.statementId} = ${selected.statement.id}
+            )`,
+          ),
+        );
+    }
     if (selected.paymentAccountId)
       await this.projection.sync({
         statementId,

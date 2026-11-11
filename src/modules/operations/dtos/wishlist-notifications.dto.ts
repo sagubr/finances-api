@@ -1,4 +1,8 @@
-import { pageInfoSchema } from "#/shared/pagination/cursor-pagination.js";
+import {
+  cursorPaginationQuerySchema,
+  pageInfoSchema,
+} from "#/shared/pagination/cursor-pagination.js";
+import { competenceMonthSchema } from "#/shared/validation/http-primitives.js";
 import { z } from "zod";
 import { operationDateSchema, operationUuidSchema, success } from "./operations.shared.dto.js";
 
@@ -22,13 +26,30 @@ export const wishlistInputSchema = z.object({
 export const wishlistPatchSchema = wishlistInputSchema.extend({
   expectedVersion: z.number().int().positive(),
 });
-export const wishlistPurchaseInputSchema = z.object({
-  expectedVersion: z.number().int().positive(),
-  accountId: operationUuidSchema,
-  categoryId: operationUuidSchema,
-  amountCents: z.number().int().positive().safe(),
-  purchasedOn: operationDateSchema,
+export const wishlistListQuerySchema = cursorPaginationQuerySchema.extend({
+  status: z.enum(["PLANNED", "PURCHASE_PENDING", "PURCHASED", "ARCHIVED"]).optional(),
+  month: competenceMonthSchema.optional(),
+  from: operationDateSchema.optional(),
+  to: operationDateSchema.optional(),
+  priority: z.coerce.number().int().min(0).max(10).optional(),
 });
+export const wishlistSummaryQuerySchema = z.object({ month: competenceMonthSchema });
+export const wishlistPurchaseInputSchema = z
+  .object({
+    expectedVersion: z.number().int().positive(),
+    createTransaction: z.boolean().default(true),
+    accountId: operationUuidSchema.optional(),
+    categoryId: operationUuidSchema.optional(),
+    amountCents: z.number().int().positive().safe(),
+    purchasedOn: operationDateSchema,
+  })
+  .superRefine((value, context) => {
+    if (!value.createTransaction) return;
+    if (!value.accountId)
+      context.addIssue({ code: "custom", path: ["accountId"], message: "Conta obrigatória." });
+    if (!value.categoryId)
+      context.addIssue({ code: "custom", path: ["categoryId"], message: "Categoria obrigatória." });
+  });
 export const wishlistItemSchema = z.object({
   id: operationUuidSchema,
   name: z.string(),
@@ -41,12 +62,23 @@ export const wishlistItemSchema = z.object({
   status: z.enum(["PLANNED", "PURCHASE_PENDING", "PURCHASED", "ARCHIVED"]),
   actualPriceCents: z.number().int().nullable(),
   purchasedOn: operationDateSchema.nullable(),
+  transactionId: operationUuidSchema.nullable(),
   version: z.number().int().positive(),
 });
 export const wishlistPurchaseSchema = z.object({
   itemId: operationUuidSchema,
-  transactionId: operationUuidSchema,
+  transactionId: operationUuidSchema.nullable(),
   repeated: z.boolean(),
+});
+export const wishlistSummarySchema = z.object({
+  month: competenceMonthSchema,
+  totals: z.array(
+    z.object({
+      currency: z.string().length(3),
+      totalCents: z.number().int().nonnegative(),
+      itemCount: z.number().int().nonnegative(),
+    }),
+  ),
 });
 export const notificationSchema = z.object({
   id: operationUuidSchema,
@@ -65,6 +97,7 @@ export const wishlistListResponseSchema = success(
   z.object({ items: z.array(wishlistItemSchema), pageInfo: pageInfoSchema }),
 );
 export const wishlistPurchaseResponseSchema = success(wishlistPurchaseSchema);
+export const wishlistSummaryResponseSchema = success(wishlistSummarySchema);
 export const notificationListResponseSchema = success(
   z.object({ items: z.array(notificationSchema), pageInfo: pageInfoSchema }),
 );
@@ -73,7 +106,10 @@ export const notificationReadResponseSchema = success(notificationReadSchema);
 
 export type WishlistInput = z.infer<typeof wishlistInputSchema>;
 export type WishlistPatch = z.infer<typeof wishlistPatchSchema>;
+export type WishlistListQuery = z.infer<typeof wishlistListQuerySchema>;
+export type WishlistSummaryQuery = z.infer<typeof wishlistSummaryQuerySchema>;
 export type WishlistPurchaseInput = z.infer<typeof wishlistPurchaseInputSchema>;
 export type WishlistItemView = z.infer<typeof wishlistItemSchema>;
 export type WishlistPurchaseView = z.infer<typeof wishlistPurchaseSchema>;
+export type WishlistSummaryView = z.infer<typeof wishlistSummarySchema>;
 export type NotificationView = z.infer<typeof notificationSchema>;

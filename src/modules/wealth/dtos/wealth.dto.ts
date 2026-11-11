@@ -25,9 +25,18 @@ export const positionListQuerySchema = cursorPaginationQuerySchema.refine(
   { message: "Invalid position cursor.", path: ["cursor"] },
 );
 export const wealthIdParamsSchema = z.object({ id: wealthUuidSchema });
+export const resolveInstrumentInputSchema = z.object({
+  ticker: z
+    .string()
+    .trim()
+    .min(4)
+    .max(20)
+    .regex(/^[A-Za-z0-9.]+$/)
+    .transform((value) => value.toUpperCase()),
+});
 export const wealthDateQuerySchema = z.object({ date: wealthDateSchema.optional() });
 export const orderInputSchema = z.object({
-  investmentAccountId: wealthUuidSchema,
+  accountId: wealthUuidSchema,
   instrumentId: wealthUuidSchema,
   side: z.enum(["BUY", "SELL"]),
   quantity: wealthDecimalSchema,
@@ -84,6 +93,7 @@ export const instrumentSchema = z.object({
   name: z.string(),
   currency: z.string().length(3),
   type: z.enum(["STOCK", "ETF", "FUND", "BOND", "CRYPTO", "CURRENCY", "OTHER"]),
+  logoUrl: z.string().url().nullable(),
 });
 export const quoteSchema = z.object({
   id: wealthUuidSchema,
@@ -94,13 +104,6 @@ export const quoteSchema = z.object({
   ingestedAt: z.string().datetime(),
   stale: z.boolean(),
 });
-export const investmentAccountSchema = z.object({
-  id: wealthUuidSchema,
-  name: z.string(),
-  currency: z.string().length(3),
-  active: z.boolean(),
-  version: z.number().int().positive(),
-});
 export const positionSchema = z.object({
   quantity: z.string(),
   totalCost: z.string(),
@@ -109,7 +112,7 @@ export const positionSchema = z.object({
 });
 export const orderSchema = z.object({
   id: wealthUuidSchema,
-  investmentAccountId: wealthUuidSchema,
+  accountId: wealthUuidSchema,
   instrumentId: wealthUuidSchema,
   symbol: z.string().optional(),
   side: z.enum(["BUY", "SELL"]),
@@ -127,17 +130,41 @@ export const orderMutationSchema = z.object({
   position: positionSchema,
 });
 export const positionProjectionSchema = z.object({
-  investmentAccountId: wealthUuidSchema,
+  accountId: wealthUuidSchema,
   instrumentId: wealthUuidSchema,
+  orderId: wealthUuidSchema.nullable(),
+  orderVersion: z.number().int().positive().nullable(),
+  orderQuantity: z.string().nullable(),
+  orderUnitPrice: z.string().nullable(),
+  orderFees: z.string().nullable(),
+  orderTradedOn: wealthDateSchema.nullable(),
   symbol: z.string(),
   name: z.string(),
   quantity: z.string(),
   averageCost: z.string(),
   totalCost: z.string(),
+  currency: z.string().length(3),
+  logoUrl: z.string().url().nullable(),
   sourceVersion: z.number().int().nonnegative(),
   calculatedAt: z.string().datetime(),
   latestPrice: z.string().nullable(),
+  currentValue: z.string().nullable(),
+  unrealizedResult: z.string().nullable(),
+  unrealizedPercent: z.string().nullable(),
+  dayChange: z.string().nullable(),
+  dayChangePercent: z.string().nullable(),
+  quoteProvider: z.string().nullable(),
   quoteAt: z.string().datetime().nullable(),
+  quoteIngestedAt: z.string().datetime().nullable(),
+  quoteStale: z.boolean(),
+});
+export const portfolioSummarySchema = z.object({
+  currency: z.string().length(3),
+  invested: z.string(),
+  current: z.string(),
+  result: z.string(),
+  positionCount: z.number().int().nonnegative(),
+  quotedPositions: z.number().int().nonnegative(),
 });
 export const assetSchema = z.object({
   id: wealthUuidSchema,
@@ -185,17 +212,17 @@ export const instrumentListResponseSchema = success(
   z.object({ items: z.array(instrumentSchema), pageInfo: pageInfoSchema }),
 );
 export const quoteResponseSchema = success(quoteSchema);
-export const investmentAccountResponseSchema = success(investmentAccountSchema);
-export const investmentAccountListResponseSchema = success(
-  z.object({ items: z.array(investmentAccountSchema), pageInfo: pageInfoSchema }),
-);
 export const orderResponseSchema = success(orderSchema);
 export const orderMutationResponseSchema = success(orderMutationSchema);
 export const orderListResponseSchema = success(
   z.object({ items: z.array(orderSchema), pageInfo: pageInfoSchema }),
 );
 export const positionListResponseSchema = success(
-  z.object({ items: z.array(positionProjectionSchema), pageInfo: pageInfoSchema }),
+  z.object({
+    items: z.array(positionProjectionSchema),
+    pageInfo: pageInfoSchema,
+    summaries: z.array(portfolioSummarySchema),
+  }),
 );
 export const assetResponseSchema = success(assetSchema);
 export const assetListResponseSchema = success(
@@ -205,6 +232,7 @@ export const assetValuationResponseSchema = success(assetValuationSchema);
 export const netWorthResponseSchema = success(netWorthSchema);
 
 export type WealthIdParams = z.infer<typeof wealthIdParamsSchema>;
+export type ResolveInstrumentInput = z.infer<typeof resolveInstrumentInputSchema>;
 export type InstrumentQuery = z.infer<typeof instrumentQuerySchema>;
 export type WealthDateQuery = z.infer<typeof wealthDateQuerySchema>;
 export type OrderInput = z.infer<typeof orderInputSchema>;
@@ -215,7 +243,6 @@ export type AssetPatch = z.infer<typeof assetPatchSchema>;
 export type AssetValuationInput = z.infer<typeof assetValuationInputSchema>;
 export type InstrumentView = z.infer<typeof instrumentSchema>;
 export type QuoteView = z.infer<typeof quoteSchema>;
-export type InvestmentAccountView = z.infer<typeof investmentAccountSchema>;
 export type OrderView = z.infer<typeof orderSchema>;
 export type OrderMutationView = z.infer<typeof orderMutationSchema>;
 export type PositionProjectionView = z.infer<typeof positionProjectionSchema>;

@@ -114,6 +114,7 @@ describe("worker use cases", () => {
       unitOfWork,
       () => crypto.randomUUID(),
       () => new Date("2026-11-02T15:00:00.000Z"),
+      { schedule: vi.fn(() => Promise.resolve()) },
     );
 
     await useCase.execute();
@@ -129,6 +130,28 @@ describe("worker use cases", () => {
         }),
       ]),
     );
+  });
+
+  it("schedules one global market refresh per configured time bucket", async () => {
+    const globalSchedule = vi.fn<(jobs: readonly ScheduledJob[]) => Promise<void>>(() =>
+      Promise.resolve(),
+    );
+    const maintenance: IMaintenanceRepository = { listWorkspaces: () => Promise.resolve([]) };
+    const unitOfWork = { run: vi.fn() } as unknown as IWorkerUnitOfWork;
+    const useCase = new ScheduleMaintenanceUseCase(
+      maintenance,
+      unitOfWork,
+      () => crypto.randomUUID(),
+      () => new Date("2026-11-02T15:14:00.000Z"),
+      { schedule: globalSchedule },
+      30,
+    );
+
+    await useCase.execute();
+
+    const scheduled = globalSchedule.mock.calls[0]?.[0][0];
+    expect(scheduled).toMatchObject({ workspaceId: null, name: "refresh-market-quotes" });
+    expect(scheduled?.executionKey).toMatch(/^refresh-market-quotes:\d+$/);
   });
 
   it("settles overdue transactions using the workspace civil date", async () => {

@@ -2,7 +2,7 @@ import type { TenantDatabase } from "#/infrastructure/database/tenant-unit-of-wo
 import type { IWealthRepository } from "#/modules/wealth/application/ports/wealth.repository.js";
 import { instruments, quotes } from "#/modules/wealth/infrastructure/database/wealth.schema.js";
 import { createCursorPage, decodeCursor } from "#/shared/pagination/cursor-pagination.js";
-import { and, desc, eq, ilike, lt, or } from "drizzle-orm";
+import { and, desc, eq, ilike, lt, or, sql } from "drizzle-orm";
 
 type MarketDataPort = Pick<IWealthRepository, "listInstruments" | "getQuote">;
 
@@ -21,6 +21,7 @@ export class MarketDataRepository implements MarketDataPort {
         name: instruments.name,
         currency: instruments.currency,
         type: instruments.type,
+        logoUrl: sql<string | null>`(${instruments.metadata} ->> 'logoUrl')`,
       })
       .from(instruments)
       .where(

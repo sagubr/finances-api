@@ -73,6 +73,8 @@ describe("OpenAPI contract", () => {
     expect(document.paths["/api/v1/billing/portal"]).toBeUndefined();
     expect(document.paths["/api/v1/payroll/net-salary"]).toBeUndefined();
     expect(document.paths["/api/v1/installment-plans"]?.get).toBeDefined();
+    expect(document.paths["/api/v1/accounts"]?.get).toBeDefined();
+    expect(document.paths["/api/v1/investments/accounts"]).toBeUndefined();
     expect(document.paths["/api/v1/privacy/exports/{id}/download-token"]).toBeUndefined();
     expect(document.paths["/api/v1/privacy/exports/{id}/download"]).toBeUndefined();
 

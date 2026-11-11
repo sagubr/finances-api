@@ -11,7 +11,12 @@ import { IdentityEmailRepository } from "#/modules/platform/infrastructure/datab
 import { JobRepository } from "#/modules/platform/infrastructure/database/job.repository.js";
 import { MaintenanceRepository } from "#/modules/platform/infrastructure/database/maintenance.repository.js";
 import { OutboxRepository } from "#/modules/platform/infrastructure/database/outbox.repository.js";
+import { ScheduledJobRepository } from "#/modules/platform/infrastructure/database/scheduled-job.repository.js";
+import { RefreshMarketQuotesUseCase } from "#/modules/wealth/application/use-cases/refresh-market-quotes.use-case.js";
+import { MarketDataCatalogRepository } from "#/modules/wealth/infrastructure/database/market-data-catalog.repository.js";
+import { BrapiMarketDataProvider } from "#/modules/wealth/infrastructure/integrations/brapi-market-data.provider.js";
 import { EmailService } from "#/shared/application/email.service.js";
+import type { IJobHandler } from "#/worker/application/job-handler.js";
 import { CleanExpiredImportFilesUseCase } from "#/worker/application/use-cases/clean-expired-import-files.use-case.js";
 import { CloseCardStatementsUseCase } from "#/worker/application/use-cases/close-card-statements.use-case.js";
 import { DispatchOutboxUseCase } from "#/worker/application/use-cases/dispatch-outbox.use-case.js";
@@ -24,8 +29,15 @@ import { v7 as uuidv7 } from "uuid";
 
 const unitOfWork = new WorkerUnitOfWork(db);
 const jobs = new JobRepository(db);
+const scheduledJobs = new ScheduledJobRepository(db);
 const now = () => new Date();
-const handlers = [
+const brapiProvider = new BrapiMarketDataProvider({
+  ...(runtimeConfig.brapiApiKey ? { apiKey: runtimeConfig.brapiApiKey } : {}),
+  baseUrl: runtimeConfig.brapiBaseUrl,
+  timeoutMs: runtimeConfig.brapiTimeoutMs,
+});
+const marketDataCatalog = new MarketDataCatalogRepository(db, uuidv7);
+const handlers: IJobHandler[] = [
   new GenerateOccurrencesUseCase(unitOfWork, uuidv7),
   new CloseCardStatementsUseCase(unitOfWork, uuidv7),
   new ReconcileBudgetsUseCase(unitOfWork, uuidv7),
@@ -35,7 +47,16 @@ const handlers = [
     now,
   ),
   new SettleOverdueTransactionsUseCase(unitOfWork),
-] as const;
+  ...(runtimeConfig.brapiApiKey
+    ? [
+        new RefreshMarketQuotesUseCase(brapiProvider, marketDataCatalog, {
+          cacheMs: runtimeConfig.marketQuoteCacheMinutes * 60_000,
+          minRequestIntervalMs: runtimeConfig.brapiMinRequestIntervalMs,
+          now,
+        }),
+      ]
+    : []),
+];
 const queuePublisher = runtimeConfig.redisUrl
   ? new BullMqEventPublisher(runtimeConfig.redisUrl)
   : null;
@@ -72,6 +93,8 @@ export const workerServices = {
     unitOfWork,
     uuidv7,
     now,
+    scheduledJobs,
+    runtimeConfig.brapiApiKey ? runtimeConfig.marketQuoteRefreshMinutes : undefined,
   ),
   dispatchOutbox: publisher ? new DispatchOutboxUseCase(new OutboxRepository(db), publisher) : null,
   close: () => publisher?.close() ?? Promise.resolve(),

@@ -9,9 +9,9 @@ import type { GetNetWorthUseCase } from "#/modules/wealth/application/use-cases/
 import type { GetQuoteUseCase } from "#/modules/wealth/application/use-cases/get-quote.use-case.js";
 import type { ListAssetsUseCase } from "#/modules/wealth/application/use-cases/list-assets.use-case.js";
 import type { ListInstrumentsUseCase } from "#/modules/wealth/application/use-cases/list-instruments.use-case.js";
-import type { ListInvestmentAccountsUseCase } from "#/modules/wealth/application/use-cases/list-investment-accounts.use-case.js";
 import type { ListOrdersUseCase } from "#/modules/wealth/application/use-cases/list-orders.use-case.js";
 import type { ListPositionsUseCase } from "#/modules/wealth/application/use-cases/list-positions.use-case.js";
+import type { ResolveInstrumentUseCase } from "#/modules/wealth/application/use-cases/resolve-instrument.use-case.js";
 import type { UpdateAssetUseCase } from "#/modules/wealth/application/use-cases/update-asset.use-case.js";
 import type { UpdateOrderUseCase } from "#/modules/wealth/application/use-cases/update-order.use-case.js";
 import type {
@@ -21,6 +21,7 @@ import type {
   InstrumentQuery,
   OrderInput,
   OrderPatch,
+  ResolveInstrumentInput,
   VersionInput,
   WealthDateQuery,
   WealthIdParams,
@@ -37,19 +38,26 @@ export class ListInstrumentsController {
     );
   }
 }
+export class ResolveInstrumentController {
+  constructor(private readonly useCase: ResolveInstrumentUseCase) {}
+  async handle(request: FastifyRequest<{ Body: ResolveInstrumentInput }>, reply: FastifyReply) {
+    return reply
+      .status(201)
+      .send(
+        response(
+          await this.useCase.execute(
+            requireRequestContext(request.requestContext),
+            request.body.ticker,
+          ),
+        ),
+      );
+  }
+}
 export class GetQuoteController {
   constructor(private readonly useCase: GetQuoteUseCase) {}
   async handle(request: FastifyRequest<{ Params: WealthIdParams }>) {
     return response(
       await this.useCase.execute(requireRequestContext(request.requestContext), request.params.id),
-    );
-  }
-}
-export class ListInvestmentAccountsController {
-  constructor(private readonly useCase: ListInvestmentAccountsUseCase) {}
-  async handle(request: FastifyRequest<{ Querystring: WealthListQuery }>) {
-    return response(
-      await this.useCase.execute(requireRequestContext(request.requestContext), request.query),
     );
   }
 }

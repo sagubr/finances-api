@@ -54,6 +54,12 @@ const environmentSchema = z.object({
   EMAIL_FROM: z.string().min(3).optional(),
   EMAIL_REPLY_TO: z.string().email().optional(),
   REDIS_URL: z.string().min(1).optional(),
+  BRAPI_API_KEY: z.string().min(1).optional(),
+  BRAPI_BASE_URL: z.string().url().default("https://brapi.dev/api/v2"),
+  BRAPI_TIMEOUT_MS: looseNumber(10_000).pipe(z.number().min(1_000).max(60_000)),
+  BRAPI_MIN_REQUEST_INTERVAL_MS: looseNumber(60_000).pipe(z.number().min(60_000).max(3_600_000)),
+  MARKET_QUOTE_CACHE_MINUTES: looseNumber(30).pipe(z.number().min(1).max(1_440)),
+  MARKET_QUOTE_REFRESH_MINUTES: looseNumber(30).pipe(z.number().min(5).max(1_440)),
   IMPORT_STORAGE_DIR: z.string().min(1).default("/tmp/finances-imports"),
   IMPORT_STORAGE_QUOTA_BYTES: looseNumber(100 * 1024 * 1024).pipe(
     z

@@ -1,4 +1,5 @@
 import { healthRoutes } from "#/modules/health/health.routes.js";
+import { wishlistRoutes } from "#/modules/operations/presentation/routes/wishlist.routes.js";
 import { budgetRoutes } from "#/modules/planning/presentation/routes/budget.routes.js";
 import { cardRoutes } from "#/modules/planning/presentation/routes/card.routes.js";
 import { importRoutes } from "#/modules/planning/presentation/routes/import.routes.js";
@@ -11,6 +12,7 @@ import { reportRoutes } from "#/modules/reports/presentation/routes/report.route
 import { accountRoutes } from "#/modules/transactions/presentation/routes/account.routes.js";
 import { categoryRoutes } from "#/modules/transactions/presentation/routes/category.routes.js";
 import { transactionRoutes } from "#/modules/transactions/presentation/routes/transaction.routes.js";
+import { investmentRoutes } from "#/modules/wealth/presentation/routes/investment.routes.js";
 import type { FastifyPluginAsync } from "fastify";
 
 export type ApiRoutesOptions = Readonly<{
@@ -32,4 +34,6 @@ export const apiRoutes: FastifyPluginAsync<ApiRoutesOptions> = async (app, optio
   await app.register(installmentRoutes, contextualOptions);
   await app.register(recurringRoutes, contextualOptions);
   await app.register(reportRoutes, contextualOptions);
+  await app.register(wishlistRoutes, contextualOptions);
+  await app.register(investmentRoutes, contextualOptions);
 };

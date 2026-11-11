@@ -1,5 +1,6 @@
 import type { CreateWishlistItemUseCase } from "#/modules/operations/application/use-cases/create-wishlist-item.use-case.js";
 import type { DeleteWishlistItemUseCase } from "#/modules/operations/application/use-cases/delete-wishlist-item.use-case.js";
+import type { GetWishlistSummaryUseCase } from "#/modules/operations/application/use-cases/get-wishlist-summary.use-case.js";
 import type { ListNotificationsUseCase } from "#/modules/operations/application/use-cases/list-notifications.use-case.js";
 import type { ListWishlistUseCase } from "#/modules/operations/application/use-cases/list-wishlist.use-case.js";
 import type { PurchaseWishlistItemUseCase } from "#/modules/operations/application/use-cases/purchase-wishlist-item.use-case.js";
@@ -10,17 +11,30 @@ import type {
   OperationIdParams,
   OperationsListQuery,
   WishlistInput,
+  WishlistListQuery,
   WishlistPatch,
   WishlistPurchaseInput,
+  WishlistSummaryQuery,
 } from "#/modules/operations/dtos/operations.dto.js";
 import { requireRequestContext } from "#/modules/platform/application/require-request-context.js";
 import { response } from "#/shared/http/response.js";
 import type { FastifyReply, FastifyRequest } from "fastify";
 export class ListWishlistController {
   constructor(private readonly useCase: ListWishlistUseCase) {}
-  async handle(request: FastifyRequest<{ Querystring: OperationsListQuery }>) {
+  async handle(request: FastifyRequest<{ Querystring: WishlistListQuery }>) {
     return response(
       await this.useCase.execute(requireRequestContext(request.requestContext), request.query),
+    );
+  }
+}
+export class GetWishlistSummaryController {
+  constructor(private readonly useCase: GetWishlistSummaryUseCase) {}
+  async handle(request: FastifyRequest<{ Querystring: WishlistSummaryQuery }>) {
+    return response(
+      await this.useCase.execute(
+        requireRequestContext(request.requestContext),
+        request.query.month,
+      ),
     );
   }
 }

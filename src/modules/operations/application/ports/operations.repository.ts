@@ -19,9 +19,11 @@ import type {
   SubscriptionView,
   WishlistInput,
   WishlistItemView,
+  WishlistListQuery,
   WishlistPatch,
   WishlistPurchaseInput,
   WishlistPurchaseView,
+  WishlistSummaryView,
 } from "#/modules/operations/dtos/operations.dto.js";
 import type { CursorPage, CursorPaginationQuery } from "#/shared/pagination/cursor-pagination.js";
 export interface IOperationsRepository {
@@ -41,7 +43,8 @@ export interface IOperationsRepository {
   archiveGoal(id: string, expectedVersion: number): Promise<void>;
   createGoalCheckin(id: string, goalId: string, input: GoalCheckinInput): Promise<GoalCheckinView>;
   getGoalProgress(id: string, calculatedAt: string): Promise<GoalProgressView>;
-  listWishlist(query: CursorPaginationQuery): Promise<CursorPage<WishlistItemView>>;
+  listWishlist(query: WishlistListQuery): Promise<CursorPage<WishlistItemView>>;
+  getWishlistSummary(month: string): Promise<WishlistSummaryView>;
   createWishlistItem(id: string, input: WishlistInput): Promise<WishlistItemView>;
   updateWishlistItem(id: string, input: WishlistPatch): Promise<WishlistItemView>;
   archiveWishlistItem(id: string, expectedVersion: number): Promise<void>;

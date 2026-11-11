@@ -12,6 +12,23 @@ npm test
 npm run build
 ```
 
+## Deploy pelo GitHub Actions
+
+O workflow [`deploy-api.yml`](../.github/workflows/deploy-api.yml) executa checks, gera o
+`.env` de produção com `SpicyPizza/create-envfile`, envia o build para `/opt/nummo/api` e
+reinicia o servidor e o worker com PM2.
+
+Configure estes **Secrets** no repositório:
+
+- `VPS_HOST`, `VPS_USERNAME`, `VPS_SSH_KEY`;
+- `API_DATABASE_PASSWORD`, `API_COOKIE_SECRET`, `API_TOKEN_ENCRYPTION_KEY`;
+- `API_GOOGLE_OAUTH_CLIENT_ID`, `API_GOOGLE_OAUTH_CLIENT_SECRET`;
+- `API_RESEND_API_KEY`, `API_BRAPI_API_KEY`, `API_REDIS_URL`.
+
+Configure os demais valores como **Variables** com o prefixo `API_` usado diretamente no
+workflow. `VPS_SSH_PORT` e `VPS_API_PATH` são opcionais e assumem, respectivamente, `22` e
+`/opt/nummo/api`.
+
 ## Processos com PM2
 
 O servidor HTTP e o worker devem rodar como processos separados. Após gerar o build, inicie os

@@ -1,0 +1,5 @@
+CREATE INDEX "wishlist_items_workspace_status_planned_idx" ON "wishlist_items" USING btree ("workspace_id","status","planned_on");--> statement-breakpoint
+ALTER TABLE "wishlist_items" ADD CONSTRAINT "wishlist_items_priority_range" CHECK ("wishlist_items"."priority" between 0 and 10);--> statement-breakpoint
+ALTER TABLE "wishlist_items" ADD CONSTRAINT "wishlist_items_estimated_price_positive" CHECK ("wishlist_items"."estimated_price_cents" is null or "wishlist_items"."estimated_price_cents" > 0);--> statement-breakpoint
+ALTER TABLE "wishlist_items" ADD CONSTRAINT "wishlist_items_actual_price_positive" CHECK ("wishlist_items"."actual_price_cents" is null or "wishlist_items"."actual_price_cents" > 0);--> statement-breakpoint
+ALTER TABLE "wishlist_items" ADD CONSTRAINT "wishlist_items_currency_format" CHECK ("wishlist_items"."currency" ~ '^[A-Z]{3}$');

@@ -1,3 +1,4 @@
+import type { IScheduledJobRepository } from "#/modules/platform/application/ports/job.repository.js";
 import type { IMaintenanceRepository } from "#/modules/platform/application/ports/maintenance.repository.js";
 import type { IWorkerUnitOfWork } from "#/worker/application/ports/worker.unit-of-work.js";
 
@@ -15,12 +16,26 @@ export class ScheduleMaintenanceUseCase {
     private readonly unitOfWork: IWorkerUnitOfWork,
     private readonly generateId: () => string,
     private readonly now: () => Date,
+    private readonly globalJobs: IScheduledJobRepository,
+    private readonly quoteRefreshMinutes?: number,
   ) {}
 
   async execute(): Promise<void> {
+    const instant = this.now();
+    if (this.quoteRefreshMinutes) {
+      const bucket = Math.floor(instant.getTime() / (this.quoteRefreshMinutes * 60_000));
+      await this.globalJobs.schedule([
+        {
+          publicId: this.generateId(),
+          workspaceId: null,
+          name: "refresh-market-quotes",
+          executionKey: `refresh-market-quotes:${bucket}`,
+          payload: {},
+        },
+      ]);
+    }
     const workspaces = await this.maintenance.listWorkspaces();
     for (const workspace of workspaces) {
-      const instant = this.now();
       const referenceOn = dateInTimezone(instant, workspace.timezone);
       const month = referenceOn.slice(0, 7);
       const hourWindow = instant.toISOString().slice(0, 13);

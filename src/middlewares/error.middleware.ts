@@ -1,6 +1,9 @@
 import { ApplicationError } from "#/shared/application/application.error.js";
 import { ApiError } from "#/shared/http/api.error.js";
-import { toSafeErrorLog } from "#/shared/observability/safe-error-log.js";
+import {
+  toDiagnosticErrorLog,
+  toSafeErrorLog,
+} from "#/shared/observability/safe-error-log.js";
 import type { FastifyError, FastifyReply, FastifyRequest } from "fastify";
 
 const internalError = {
@@ -8,6 +11,11 @@ const internalError = {
   message: "Não foi possível concluir a operação.",
   data: { code: "INTERNAL_SERVER_ERROR" },
 } as const;
+
+const errorLog = (error: unknown) =>
+  process.env.NODE_ENV === "development"
+    ? toDiagnosticErrorLog(error)
+    : toSafeErrorLog(error);
 
 const transientDatabaseCodes = new Set([
   "ECONNRESET",
@@ -114,7 +122,7 @@ export const errorHandler = (
 
   const databaseClientError = databaseClientErrors.get(errorCode(error) ?? "");
   if (databaseClientError) {
-    request.log.warn({ error: toSafeErrorLog(error) }, "Database rejected client input");
+    request.log.warn({ error: errorLog(error) }, "Database rejected client input");
     return reply.status(databaseClientError.statusCode).send({
       success: false,
       message: databaseClientError.message,
@@ -123,7 +131,7 @@ export const errorHandler = (
   }
 
   if (transientDatabaseCodes.has(errorCode(error) ?? "")) {
-    request.log.error({ error: toSafeErrorLog(error) }, "Transient database error");
+    request.log.error({ error: errorLog(error) }, "Transient database error");
     return reply.status(503).send({
       success: false,
       message: "Conexão temporariamente indisponível.",
@@ -141,7 +149,7 @@ export const errorHandler = (
     });
   }
 
-  request.log.error({ error: toSafeErrorLog(error) }, "Unhandled request error");
+  request.log.error({ error: errorLog(error) }, "Unhandled request error");
   return reply.status(500).send({
     ...internalError,
     data: { ...internalError.data, requestId: request.id },

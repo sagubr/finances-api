@@ -1,7 +1,10 @@
 import { buildApp } from "#/app.js";
 import { runtimeConfig } from "#/config/runtime.config.js";
 import { closeDatabase } from "#/infrastructure/database/db.provider.js";
-import { toSafeErrorLog } from "#/shared/observability/safe-error-log.js";
+import {
+  toDiagnosticErrorLog,
+  toSafeErrorLog,
+} from "#/shared/observability/safe-error-log.js";
 
 const start = async (): Promise<void> => {
   const app = await buildApp();
@@ -20,7 +23,11 @@ const start = async (): Promise<void> => {
 };
 
 start().catch(async (error: unknown) => {
-  process.stderr.write(`Failed to start HTTP server: ${JSON.stringify(toSafeErrorLog(error))}\n`);
+  const errorLog =
+    runtimeConfig.environment === "development"
+      ? toDiagnosticErrorLog(error)
+      : toSafeErrorLog(error);
+  process.stderr.write(`Failed to start HTTP server: ${JSON.stringify(errorLog)}\n`);
   await closeDatabase().catch(() => undefined);
   process.exitCode = 1;
 });

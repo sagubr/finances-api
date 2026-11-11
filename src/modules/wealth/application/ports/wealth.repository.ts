@@ -5,7 +5,6 @@ import type {
   AssetValuationView,
   AssetView,
   InstrumentView,
-  InvestmentAccountView,
   NetWorthView,
   OrderInput,
   OrderMutationView,
@@ -20,7 +19,6 @@ export interface IWealthRepository {
     query: CursorPaginationQuery & { q?: string | undefined },
   ): Promise<CursorPage<InstrumentView>>;
   getQuote(id: string): Promise<QuoteView | null>;
-  listInvestmentAccounts(query: CursorPaginationQuery): Promise<CursorPage<InvestmentAccountView>>;
   listOrders(query: CursorPaginationQuery): Promise<CursorPage<OrderView>>;
   listPositions(query: CursorPaginationQuery): Promise<CursorPage<PositionProjectionView>>;
   createOrder(id: string, input: OrderInput): Promise<OrderView>;

@@ -1,3 +1,4 @@
+import type { Database } from "#/infrastructure/database/db.provider.js";
 import type { TenantDatabase } from "#/infrastructure/database/tenant-unit-of-work.js";
 import type {
   IScheduledJobRepository,
@@ -6,7 +7,7 @@ import type {
 import { jobRuns } from "#/modules/platform/infrastructure/database/platform.schema.js";
 
 export class ScheduledJobRepository implements IScheduledJobRepository {
-  constructor(private readonly database: TenantDatabase) {}
+  constructor(private readonly database: Database | TenantDatabase) {}
 
   async schedule(jobs: readonly ScheduledJob[]): Promise<void> {
     if (jobs.length === 0) return;

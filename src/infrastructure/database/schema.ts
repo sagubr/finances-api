@@ -37,6 +37,7 @@ export {
   budgets,
   cardAccountingMode,
   cardStatements,
+  creditCardBrand,
   creditCards,
   importBatches,
   importCommits,
@@ -51,3 +52,21 @@ export {
   statementPayments,
   statementStatus,
 } from "#/modules/planning/infrastructure/database/planning.schema.js";
+
+export {
+  wishlistItems,
+  wishlistPurchaseLinks,
+  wishlistStatus,
+} from "#/modules/operations/infrastructure/database/operations.schema.js";
+
+export {
+  instrumentProviderMappings,
+  instrumentType,
+  instruments,
+  investmentOrders,
+  marketDataFetches,
+  marketProviderRateLimits,
+  orderSide,
+  positionProjections,
+  quotes,
+} from "#/modules/wealth/infrastructure/database/wealth.schema.js";

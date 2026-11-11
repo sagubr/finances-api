@@ -423,6 +423,21 @@ export const wishlistItems = pgTable(
   },
   (table) => [
     tenantIndex("wishlist_items", table.workspaceId),
+    index("wishlist_items_workspace_status_planned_idx").on(
+      table.workspaceId,
+      table.status,
+      table.plannedOn,
+    ),
+    check("wishlist_items_priority_range", sql`${table.priority} between 0 and 10`),
+    check(
+      "wishlist_items_estimated_price_positive",
+      sql`${table.estimatedPriceCents} is null or ${table.estimatedPriceCents} > 0`,
+    ),
+    check(
+      "wishlist_items_actual_price_positive",
+      sql`${table.actualPriceCents} is null or ${table.actualPriceCents} > 0`,
+    ),
+    check("wishlist_items_currency_format", sql`${table.currency} ~ '^[A-Z]{3}$'`),
     tenantPolicy("wishlist_items", table.workspaceId),
   ],
 ).enableRLS();

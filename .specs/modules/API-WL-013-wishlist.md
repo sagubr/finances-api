@@ -1,6 +1,6 @@
 # API-WL-013 — Lista de Desejos
 
-Status: proposta  
+Status: entregue
 Onda: 5  
 Dependências: API-TX-001
 
@@ -30,8 +30,9 @@ CRUD `/wishlist`; `POST /wishlist/{id}/purchase`; `POST /wishlist/{id}/archive`;
 
 URL inválida/interna continua apenas texto e nunca é acessada; comando repetido não duplica TX; falha entre compra e vínculo é reconciliada. Aceite: compra cria no máximo uma transação correta e preserva vínculo ao arquivar.
 
-## Questões abertas
+## Decisões de entrega
 
-- múltiplas moedas no resumo;
-- itens compartilhados;
-- scraping futuro exige serviço isolado e spec de SSRF própria.
+- o resumo mantém totais separados por moeda;
+- itens pertencem ao workspace e não são compartilhados individualmente na V1;
+- a compra pode ou não criar uma transação, sempre com comando idempotente;
+- scraping permanece fora do escopo e exigirá serviço isolado e spec de SSRF própria.

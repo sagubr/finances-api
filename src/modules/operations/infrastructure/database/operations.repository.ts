@@ -45,6 +45,7 @@ import { jobRuns, workspaces } from "#/modules/platform/infrastructure/database/
 import {
   accounts,
   categories,
+  transactionHistory,
   transactions,
 } from "#/modules/transactions/infrastructure/database/transactions.schema.js";
 import { ApplicationError } from "#/shared/application/application.error.js";
@@ -467,19 +468,83 @@ export class OperationsRepository implements IOperationsRepository {
 
   async listWishlist(query: Parameters<IOperationsRepository["listWishlist"]>[0]) {
     const cursor = decodeCursor(query.cursor);
+    const monthStart = query.month ? `${query.month}-01` : undefined;
+    const monthEnd = query.month
+      ? new Date(Date.UTC(Number(query.month.slice(0, 4)), Number(query.month.slice(5, 7)), 1))
+          .toISOString()
+          .slice(0, 10)
+      : undefined;
     const rows = await this.database
-      .select()
+      .select({
+        item: wishlistItems,
+        transactionId: transactions.publicId,
+      })
       .from(wishlistItems)
+      .leftJoin(wishlistPurchaseLinks, eq(wishlistPurchaseLinks.itemId, wishlistItems.id))
+      .leftJoin(transactions, eq(transactions.id, wishlistPurchaseLinks.transactionId))
       .where(
         and(
           eq(wishlistItems.workspaceId, this.context.workspaceId),
-          ne(wishlistItems.status, "ARCHIVED"),
+          ...(query.status
+            ? [eq(wishlistItems.status, query.status)]
+            : [ne(wishlistItems.status, "ARCHIVED")]),
+          ...(query.priority !== undefined ? [eq(wishlistItems.priority, query.priority)] : []),
+          ...(monthStart && monthEnd
+            ? [
+                sql`coalesce(${wishlistItems.purchasedOn}, ${wishlistItems.plannedOn}) >= ${monthStart}::date`,
+                sql`coalesce(${wishlistItems.purchasedOn}, ${wishlistItems.plannedOn}) < ${monthEnd}::date`,
+              ]
+            : []),
+          ...(query.from
+            ? [
+                sql`coalesce(${wishlistItems.purchasedOn}, ${wishlistItems.plannedOn}) >= ${query.from}::date`,
+              ]
+            : []),
+          ...(query.to
+            ? [
+                sql`coalesce(${wishlistItems.purchasedOn}, ${wishlistItems.plannedOn}) <= ${query.to}::date`,
+              ]
+            : []),
           ...(cursor ? [lt(wishlistItems.publicId, cursor)] : []),
         ),
       )
       .orderBy(desc(wishlistItems.publicId))
       .limit(query.limit + 1);
-    return createCursorPage(rows.map(mapWishlistItem), query.limit);
+    return createCursorPage(
+      rows.map(({ item, transactionId }) => mapWishlistItem({ ...item, transactionId })),
+      query.limit,
+    );
+  }
+  async getWishlistSummary(month: string) {
+    const monthStart = `${month}-01`;
+    const monthEnd = new Date(Date.UTC(Number(month.slice(0, 4)), Number(month.slice(5, 7)), 1))
+      .toISOString()
+      .slice(0, 10);
+    const rows = await this.database
+      .select({
+        currency: wishlistItems.currency,
+        totalCents: sql<bigint>`coalesce(sum(${wishlistItems.estimatedPriceCents}), 0)`,
+        itemCount: sql<bigint>`count(*)`,
+      })
+      .from(wishlistItems)
+      .where(
+        and(
+          eq(wishlistItems.workspaceId, this.context.workspaceId),
+          inArray(wishlistItems.status, ["PLANNED", "PURCHASE_PENDING"]),
+          sql`${wishlistItems.plannedOn} >= ${monthStart}::date`,
+          sql`${wishlistItems.plannedOn} < ${monthEnd}::date`,
+        ),
+      )
+      .groupBy(wishlistItems.currency)
+      .orderBy(asc(wishlistItems.currency));
+    return {
+      month,
+      totals: rows.map((row) => ({
+        currency: row.currency,
+        totalCents: Number(row.totalCents),
+        itemCount: Number(row.itemCount),
+      })),
+    };
   }
   async createWishlistItem(id: string, input: WishlistInput) {
     await this.database.insert(wishlistItems).values({
@@ -506,6 +571,7 @@ export class OperationsRepository implements IOperationsRepository {
       status: "PLANNED" as const,
       actualPriceCents: null,
       purchasedOn: null,
+      transactionId: null,
       version: 1,
     };
   }
@@ -559,10 +625,13 @@ export class OperationsRepository implements IOperationsRepository {
   async purchaseWishlistItem(id: string, transactionId: string, input: WishlistPurchaseInput) {
     const prior = (
       await this.database
-        .select({ transactionId: transactions.publicId })
-        .from(wishlistPurchaseLinks)
-        .innerJoin(wishlistItems, eq(wishlistItems.id, wishlistPurchaseLinks.itemId))
-        .innerJoin(transactions, eq(transactions.id, wishlistPurchaseLinks.transactionId))
+        .select({
+          status: wishlistItems.status,
+          transactionId: transactions.publicId,
+        })
+        .from(wishlistItems)
+        .leftJoin(wishlistPurchaseLinks, eq(wishlistItems.id, wishlistPurchaseLinks.itemId))
+        .leftJoin(transactions, eq(transactions.id, wishlistPurchaseLinks.transactionId))
         .where(
           and(
             eq(wishlistItems.workspaceId, this.context.workspaceId),
@@ -571,7 +640,8 @@ export class OperationsRepository implements IOperationsRepository {
         )
         .limit(1)
     )[0];
-    if (prior) return { itemId: id, transactionId: prior.transactionId, repeated: true };
+    if (prior?.status === "PURCHASED")
+      return { itemId: id, transactionId: prior.transactionId ?? null, repeated: true };
     const item = (
       await this.database
         .select({
@@ -590,6 +660,31 @@ export class OperationsRepository implements IOperationsRepository {
         )
         .limit(1)
     )[0];
+    if (!item)
+      throw new ApplicationError("Item inválido ou já alterado.", {
+        category: "validation",
+        code: "WISHLIST_PURCHASE_INVALID",
+      });
+    if (!input.createTransaction) {
+      await this.database
+        .update(wishlistItems)
+        .set({
+          status: "PURCHASED",
+          actualPriceCents: BigInt(input.amountCents),
+          purchasedOn: input.purchasedOn,
+          version: sql`${wishlistItems.version} + 1`,
+          updatedAt: new Date(),
+        })
+        .where(eq(wishlistItems.id, item.id));
+      return { itemId: id, transactionId: null, repeated: false };
+    }
+    const accountId = input.accountId;
+    const categoryId = input.categoryId;
+    if (!accountId || !categoryId)
+      throw new ApplicationError("Conta e categoria são obrigatórias para criar a despesa.", {
+        category: "validation",
+        code: "WISHLIST_PURCHASE_INVALID",
+      });
     const account = (
       await this.database
         .select({ id: accounts.id })
@@ -597,7 +692,9 @@ export class OperationsRepository implements IOperationsRepository {
         .where(
           and(
             eq(accounts.workspaceId, this.context.workspaceId),
-            eq(accounts.publicId, input.accountId),
+            eq(accounts.publicId, accountId),
+            eq(accounts.currency, item.currency),
+            eq(accounts.active, true),
             isNull(accounts.deletedAt),
           ),
         )
@@ -610,14 +707,15 @@ export class OperationsRepository implements IOperationsRepository {
         .where(
           and(
             eq(categories.workspaceId, this.context.workspaceId),
-            eq(categories.publicId, input.categoryId),
+            eq(categories.publicId, categoryId),
             eq(categories.type, "EXPENSE"),
+            eq(categories.active, true),
           ),
         )
         .limit(1)
     )[0];
-    if (!item || !account || !category)
-      throw new ApplicationError("Item, conta ou categoria inválido.", {
+    if (!account || !category)
+      throw new ApplicationError("Conta ou categoria inválida para a compra.", {
         category: "validation",
         code: "WISHLIST_PURCHASE_INVALID",
       });
@@ -645,6 +743,32 @@ export class OperationsRepository implements IOperationsRepository {
       .returning({ id: transactions.id });
     const transaction = transactionRows[0];
     if (!transaction) throw new Error("Wishlist transaction insert did not return a row.");
+    await this.database.insert(transactionHistory).values({
+      workspaceId: this.context.workspaceId,
+      transactionId: transaction.id,
+      transactionPublicId: transactionId,
+      version: 1,
+      action: "CREATED",
+      actorId: this.context.userId,
+      snapshot: {
+        id: transactionId,
+        accountId,
+        categoryId,
+        type: "EXPENSE",
+        status: "SETTLED",
+        amountCents: input.amountCents,
+        currency: item.currency,
+        description: item.name,
+        occurredOn: input.purchasedOn,
+        competenceMonth: input.purchasedOn.slice(0, 7),
+        settledOn: input.purchasedOn,
+        sourceModule: "WL",
+        sourcePublicId: id,
+        location: null,
+        version: 1,
+        deletedAt: null,
+      },
+    });
     await this.database.insert(wishlistPurchaseLinks).values({
       workspaceId: this.context.workspaceId,
       itemId: item.id,

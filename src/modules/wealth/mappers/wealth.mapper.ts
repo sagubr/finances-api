@@ -1,9 +1,19 @@
 import type {
   AssetView,
-  InvestmentAccountView,
   NetWorthView,
   PositionProjectionView,
 } from "#/modules/wealth/dtos/wealth.dto.js";
+import { Decimal } from "decimal.js";
+
+type TimestampValue = Date | string;
+
+const toDate = (value: TimestampValue): Date => {
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) throw new Error("Persisted timestamp is invalid.");
+  return date;
+};
+
+const toIsoString = (value: TimestampValue): string => toDate(value).toISOString();
 
 export const mapSafeMoney = (value: bigint): number => {
   const number = Number(value);
@@ -12,39 +22,73 @@ export const mapSafeMoney = (value: bigint): number => {
   return number;
 };
 
-export const mapInvestmentAccount = (row: {
-  id: string;
-  name: string;
-  currency: string;
-  active: boolean;
-  version: number;
-}): InvestmentAccountView => row;
-
 export const mapPositionProjection = (row: {
-  investmentAccountId: string;
+  accountId: string;
   instrumentId: string;
+  orderId: string | null;
+  orderVersion: number | null;
+  orderQuantity: string | null;
+  orderUnitPrice: string | null;
+  orderFees: string | null;
+  orderTradedOn: string | null;
   symbol: string;
   name: string;
   quantity: string;
   averageCost: string;
   totalCost: string;
+  currency: string;
+  logoUrl: string | null;
   sourceVersion: number;
   latestPrice: string | null;
-  calculatedAt: Date;
-  quoteAt: Date | null;
-}): PositionProjectionView => ({
-  investmentAccountId: row.investmentAccountId,
-  instrumentId: row.instrumentId,
-  symbol: row.symbol,
-  name: row.name,
-  quantity: row.quantity,
-  averageCost: row.averageCost,
-  totalCost: row.totalCost,
-  sourceVersion: row.sourceVersion,
-  latestPrice: row.latestPrice,
-  calculatedAt: row.calculatedAt.toISOString(),
-  quoteAt: row.quoteAt?.toISOString() ?? null,
-});
+  dayChange: string | null;
+  dayChangePercent: string | null;
+  quoteProvider: string | null;
+  calculatedAt: TimestampValue;
+  quoteAt: TimestampValue | null;
+  quoteIngestedAt: TimestampValue | null;
+}): PositionProjectionView => {
+  const currentValue = row.latestPrice
+    ? new Decimal(row.quantity).times(row.latestPrice).toFixed(10)
+    : null;
+  const unrealizedResult = currentValue
+    ? new Decimal(currentValue).minus(row.totalCost).toFixed(10)
+    : null;
+  const unrealizedPercent =
+    unrealizedResult && !new Decimal(row.totalCost).isZero()
+      ? new Decimal(unrealizedResult).dividedBy(row.totalCost).times(100).toFixed(4)
+      : null;
+  return {
+    accountId: row.accountId,
+    instrumentId: row.instrumentId,
+    orderId: row.orderId,
+    orderVersion: row.orderVersion,
+    orderQuantity: row.orderQuantity,
+    orderUnitPrice: row.orderUnitPrice,
+    orderFees: row.orderFees,
+    orderTradedOn: row.orderTradedOn,
+    symbol: row.symbol,
+    name: row.name,
+    quantity: row.quantity,
+    averageCost: row.averageCost,
+    totalCost: row.totalCost,
+    currency: row.currency,
+    logoUrl: row.logoUrl,
+    sourceVersion: row.sourceVersion,
+    latestPrice: row.latestPrice,
+    currentValue,
+    unrealizedResult,
+    unrealizedPercent,
+    dayChange: row.dayChange,
+    dayChangePercent: row.dayChangePercent,
+    quoteProvider: row.quoteProvider,
+    calculatedAt: toIsoString(row.calculatedAt),
+    quoteAt: row.quoteAt ? toIsoString(row.quoteAt) : null,
+    quoteIngestedAt: row.quoteIngestedAt ? toIsoString(row.quoteIngestedAt) : null,
+    quoteStale:
+      !row.quoteIngestedAt ||
+      Date.now() - toDate(row.quoteIngestedAt).getTime() > 2 * 60 * 60 * 1_000,
+  };
+};
 
 export const mapAsset = (row: {
   id: string;

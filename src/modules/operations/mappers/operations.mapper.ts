@@ -41,6 +41,7 @@ export const mapWishlistItem = (row: {
   status: WishlistItemView["status"];
   actualPriceCents: bigint | null;
   purchasedOn: string | null;
+  transactionId?: string | null;
   version: number;
 }): WishlistItemView => ({
   id: row.publicId,
@@ -54,6 +55,7 @@ export const mapWishlistItem = (row: {
   status: row.status,
   actualPriceCents: mapOptionalMoney(row.actualPriceCents),
   purchasedOn: row.purchasedOn,
+  transactionId: row.transactionId ?? null,
   version: row.version,
 });
 
