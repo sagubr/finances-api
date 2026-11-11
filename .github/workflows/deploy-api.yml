@@ -3,9 +3,6 @@ name: Deploy API
 on:
   push:
     branches: [main]
-    paths:
-      - "api/**"
-      - ".github/workflows/deploy-api.yml"
   workflow_dispatch:
 
 concurrency:
@@ -15,9 +12,6 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: api
 
     steps:
       - name: Checkout
@@ -28,7 +22,7 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: api/package-lock.json
+          cache-dependency-path: package-lock.json
 
       - name: Install dependencies
         run: npm ci
@@ -73,12 +67,12 @@ jobs:
           envkey_EXPORT_STORAGE_DIR: ${{ vars.API_EXPORT_STORAGE_DIR }}
           envkey_CORS_ALLOWED_ORIGINS: ${{ vars.API_CORS_ALLOWED_ORIGINS }}
           file_name: .env
-          directory: api
+          directory: .
           fail_on_empty: false
           sort_keys: false
 
       - name: Package release
-        run: tar -czf ../api-release.tar.gz dist package.json package-lock.json ecosystem.config.cjs .env
+        run: tar -czf api-release.tar.gz dist package.json package-lock.json ecosystem.config.cjs .env
 
       - name: Upload release
         uses: appleboy/scp-action@v0.1.7

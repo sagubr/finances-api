@@ -14,7 +14,7 @@ npm run build
 
 ## Deploy pelo GitHub Actions
 
-O workflow [`deploy-api.yml`](../.github/workflows/deploy-api.yml) executa checks, gera o
+O workflow [`deploy-api.yml`](.github/workflows/deploy-api.yml) executa o build, gera o
 `.env` de produção com `SpicyPizza/create-envfile`, envia o build para `/opt/nummo/api` e
 reinicia o servidor e o worker com PM2.
 
